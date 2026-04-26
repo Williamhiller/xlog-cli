@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>__XLOGGER_TITLE__</title>
+    <script>
+      (() => {
+        try {
+          const stored = JSON.parse(localStorage.getItem("xlogger.viewer.ui") || "{}");
+          const themeMode = stored.themeMode || "auto";
+          const resolved =
+            themeMode === "auto"
+              ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : themeMode;
+          document.documentElement.dataset.themeMode = themeMode;
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        } catch {
+          document.documentElement.dataset.themeMode = "auto";
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.colorScheme = "dark";
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/vendor/remixicon/remixicon.css" />
+    <link rel="stylesheet" href="/viewer/viewer.css" />
+  </head>
+  <body>
+    <div class="app-shell is-detail-closed" id="app-shell">
+      <header class="commandbar">
+        <div class="commandbar-left">
+          <div class="brand-pill">
+            <span class="brand-dot"></span>
+            <i class="ri-terminal-box-line"></i>
+            <span class="brand-wordmark">xlogger</span>
+          </div>
+          <span class="status-pill" id="live-state"><i class="ri-radar-line"></i><span>connecting</span></span>
+          <span class="status-pill status-pill--muted" id="storage-driver"><i class="ri-database-2-line"></i><span>storage pending</span></span>
+        </div>
+
+        <div class="commandbar-right">
+          <div class="meta-chip" title="Viewer URL">
+            <i class="ri-link"></i>
+            <span class="meta-chip-label">viewer</span>
+            <span class="meta-chip-value" id="viewer-url">waiting...</span>
+          </div>
+          <div class="meta-chip" title="Storage path">
+            <i class="ri-folder-2-line"></i>
+            <span class="meta-chip-label">store</span>
+            <span class="meta-chip-value" id="store-path">waiting...</span>
+          </div>
+          <button
+            class="settings-toggle settings-toggle--header"
+            id="settings-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-label="Open appearance settings"
+          >
+            <i class="ri-contrast-2-line"></i>
+            <span>Appearance</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sessions-panel" id="sessions-panel">
+          <div class="panel-head panel-head--sessions">
+            <div class="panel-head-group">
+              <i class="ri-stack-line"></i>
+              <strong class="panel-title">Sessions</strong>
+              <span class="panel-count" id="session-count">0</span>
+            </div>
+            <button
+              class="panel-toggle"
+              id="sessions-toggle"
+              type="button"
+              aria-expanded="true"
+              aria-label="Collapse sessions"
+            >
+              <i id="sessions-toggle-icon" class="ri-sidebar-fold-line"></i>
+            </button>
+          </div>
+          <div class="sessions-list" id="sessions"></div>
+        </aside>
+
+        <section class="console-panel">
+          <div class="logs-head">
+            <div class="logs-head-top">
+              <div class="panel-head-group">
+                <i class="ri-terminal-window-line"></i>
+                <strong class="panel-title">Logs</strong>
+                <span class="panel-count" id="log-count">0</span>
+              </div>
+              <div class="logs-head-actions">
+                <div class="metric-strip metric-strip--panel" id="stats"></div>
+                <button
+                  class="panel-toggle panel-toggle--density"
+                  id="density-toggle"
+                  type="button"
+                  aria-pressed="false"
+                  aria-label="Toggle ultra compact density"
+                >
+                  <i class="ri-layout-grid-line"></i>
+                  <span id="density-toggle-text">Ultra</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="logs-head-filters">
+              <input
+                id="search-input"
+                class="toolbar-input toolbar-input--search"
+                type="search"
+                placeholder="Search logs"
+                aria-label="Search logs"
+              />
+              <select id="level-select" class="toolbar-select" aria-label="Filter by level">
+                <option value="">Level</option>
+                <option value="error">error</option>
+                <option value="warn">warn</option>
+                <option value="info">info</option>
+                <option value="log">log</option>
+                <option value="debug">debug</option>
+                <option value="trace">trace</option>
+              </select>
+              <select id="kind-select" class="toolbar-select" aria-label="Filter by kind">
+                <option value="">Kind</option>
+                <option value="console">console</option>
+                <option value="window.error">window.error</option>
+                <option value="unhandledrejection">unhandledrejection</option>
+              </select>
+              <input
+                id="file-input"
+                class="toolbar-input"
+                type="search"
+                placeholder="File"
+                aria-label="Filter by file"
+              />
+            </div>
+          </div>
+
+          <div class="console-header">
+            <span>Time</span>
+            <span>Level</span>
+            <span>Message</span>
+            <span>Source</span>
+          </div>
+
+          <div class="logs-list" id="logs"></div>
+        </section>
+
+        <aside class="detail-panel" id="detail-panel" hidden aria-hidden="true">
+          <div class="detail-head">
+            <div>
+              <div class="detail-kicker">Selected Entry</div>
+              <div class="detail-title" id="detail-title">No log selected</div>
+            </div>
+            <div class="detail-head-actions">
+              <div class="detail-meta" id="detail-meta"></div>
+              <button
+                class="panel-toggle panel-toggle--close"
+                id="detail-close"
+                type="button"
+                aria-label="Close details"
+              >
+                <i class="ri-close-line"></i>
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <article class="detail-card">
+              <div class="detail-card-head">
+                <div class="detail-card-title"><i class="ri-file-text-line"></i>Summary</div>
+                <button class="detail-copy" data-copy-target="detail-message" type="button" aria-label="Copy summary">
+                  <i class="ri-file-copy-line"></i>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre class="detail-pre detail-pre--message" id="detail-message">Select a row to inspect the payload, stack, and source location.</pre>
+            </article>
+
+            <article class="detail-card">
+              <div class="detail-card-head">
+                <div class="detail-card-title"><i class="ri-map-pin-line"></i>Callsite + Session</div>
+                <button class="detail-copy" data-copy-target="detail-context" type="button" aria-label="Copy callsite and session">
+                  <i class="ri-file-copy-line"></i>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre class="detail-pre" id="detail-context">No source metadata yet.</pre>
+            </article>
+
+            <article class="detail-card">
+              <div class="detail-card-head">
+                <div class="detail-card-title"><i class="ri-braces-line"></i>Args</div>
+                <button class="detail-copy" data-copy-target="detail-args" type="button" aria-label="Copy args">
+                  <i class="ri-file-copy-line"></i>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre class="detail-pre" id="detail-args">[]</pre>
+            </article>
+
+            <article class="detail-card">
+              <div class="detail-card-head">
+                <div class="detail-card-title"><i class="ri-bug-line"></i>Stack</div>
+                <button class="detail-copy" data-copy-target="detail-stack" type="button" aria-label="Copy stack">
+                  <i class="ri-file-copy-line"></i>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre class="detail-pre" id="detail-stack">No stack</pre>
+            </article>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <aside class="settings-panel" id="settings-panel" hidden>
+      <div class="settings-title"><i class="ri-palette-line"></i>Theme</div>
+      <div class="theme-options" id="theme-options">
+        <button class="theme-option" data-theme-mode="auto" type="button">Auto</button>
+        <button class="theme-option" data-theme-mode="dark" type="button">Dark</button>
+        <button class="theme-option" data-theme-mode="light" type="button">Light</button>
+      </div>
+    </aside>
+
+    <div class="floating-tooltip" id="floating-tooltip" role="tooltip" hidden></div>
+    <script src="/vendor/framer-motion/dom.js"></script>
+    <script src="/vendor/floating-ui-core/floating-ui.core.umd.js"></script>
+    <script src="/vendor/floating-ui/floating-ui.dom.umd.js"></script>
+    <script type="module" src="/viewer/viewer.js"></script>
+  </body>
+</html>

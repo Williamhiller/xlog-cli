@@ -1,0 +1,47 @@
+{
+  "name": "xlogger",
+  "version": "0.1.0",
+  "description": "Local-first development logger with browser interception, file storage, and an HTML viewer.",
+  "type": "module",
+  "bin": {
+    "xlogger": "./bin/xlogger.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./server": "./src/server/server.js",
+    "./runtime": "./src/runtime/interceptor.js",
+    "./vite": "./src/plugins/vite-plugin.js",
+    "./webpack": "./src/plugins/webpack-plugin.js",
+    "./babel-plugin": "./src/plugins/babel-plugin.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "serve": "node ./bin/xlogger.js serve",
+    "dev:viewer": "node ./bin/dev-viewer.js",
+    "dev:viewer:ui": "vite --config viewer-react/vite.config.js",
+    "build:viewer": "vite build --config viewer-react/vite.config.js"
+  },
+  "keywords": [
+    "logger",
+    "console",
+    "vite",
+    "webpack",
+    "debug",
+    "observability"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@floating-ui/dom": "^1.7.6",
+    "motion": "^12.38.0",
+    "remixicon": "^4.9.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "antd": "^5.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.10"
+  }
+}

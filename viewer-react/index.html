@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>__XLOGGER_TITLE__</title>
+    <script>
+      (() => {
+        try {
+          const stored = JSON.parse(localStorage.getItem("xlogger.viewer.ui") || "{}");
+          const themeMode = stored.themeMode || "auto";
+          const resolved =
+            themeMode === "auto"
+              ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : themeMode;
+          document.documentElement.dataset.themeMode = themeMode;
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        } catch {
+          document.documentElement.dataset.themeMode = "auto";
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.colorScheme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
