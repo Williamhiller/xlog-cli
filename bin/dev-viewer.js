@@ -188,11 +188,11 @@ function waitForBackendReady(child) {
 
     const handleExit = (code, signal) => {
       const status = signal ? `signal ${signal}` : `code ${code}`;
-      finish(new Error(`xlogger backend exited before becoming ready (${status})`));
+      finish(new Error(`xlog backend exited before becoming ready (${status})`));
     };
 
     pipeStream(child.stdout, process.stdout, (line) => {
-      const match = line.match(/\[xlogger\] listening on (http:\/\/\S+)/);
+      const match = line.match(/\[xlog\] listening on (http:\/\/\S+)/);
       if (match) {
         finish(null, { serverUrl: match[1] });
       }
@@ -210,7 +210,7 @@ function attachExitHandler(child, label) {
     }
 
     const status = signal ? `signal ${signal}` : `code ${code}`;
-    console.error(`[xlogger] ${label} exited with ${status}`);
+    console.error(`[xlog] ${label} exited with ${status}`);
     shutdown(code === 0 ? 1 : code || 1);
   });
 }
@@ -371,11 +371,11 @@ async function openBrowserFallback(url) {
 }
 
 async function openViewerInBrowser(url) {
-  if (!readBoolean("XLOGGER_AUTO_OPEN", true)) {
+  if (!readBoolean("XLOG_AUTO_OPEN", true)) {
     return "disabled";
   }
 
-  const browserHint = process.env.XLOGGER_BROWSER_APP || "";
+  const browserHint = process.env.XLOG_BROWSER_APP || "";
 
   if (process.platform === "darwin") {
     return openBrowserOnMac(url, browserHint);
@@ -407,15 +407,15 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  const backendHost = process.env.XLOGGER_BACKEND_HOST || DEFAULT_BACKEND_HOST;
-  const backendPort = readPort("XLOGGER_BACKEND_PORT", DEFAULT_BACKEND_PORT);
-  const viewerHost = process.env.XLOGGER_VIEWER_HOST || DEFAULT_VIEWER_HOST;
-  const viewerPort = readPort("XLOGGER_VIEWER_PORT", DEFAULT_VIEWER_PORT);
+  const backendHost = process.env.XLOG_BACKEND_HOST || DEFAULT_BACKEND_HOST;
+  const backendPort = readPort("XLOG_BACKEND_PORT", DEFAULT_BACKEND_PORT);
+  const viewerHost = process.env.XLOG_VIEWER_HOST || DEFAULT_VIEWER_HOST;
+  const viewerPort = readPort("XLOG_VIEWER_PORT", DEFAULT_VIEWER_PORT);
   const backendUrl = `http://${backendHost}:${backendPort}`;
   const frontendUrl = `http://${viewerHost}:${viewerPort}/viewer/`;
 
   backendChild = spawnNodeProcess([
-    path.resolve(ROOT_DIR, "bin/xlogger.js"),
+    path.resolve(ROOT_DIR, "bin/xlog-cli.js"),
     "serve",
     "--host",
     backendHost,
@@ -438,9 +438,9 @@ async function main() {
       "--strictPort"
     ],
     {
-      XLOGGER_VIEWER_BACKEND_URL: backendUrl,
-      XLOGGER_VIEWER_HOST: viewerHost,
-      XLOGGER_VIEWER_PORT: String(viewerPort)
+      XLOG_VIEWER_BACKEND_URL: backendUrl,
+      XLOG_VIEWER_HOST: viewerHost,
+      XLOG_VIEWER_PORT: String(viewerPort)
     }
   );
   pipeStream(viteChild.stdout, process.stdout);
@@ -452,18 +452,18 @@ async function main() {
   try {
     const browserAction = await openViewerInBrowser(frontendUrl);
     if (browserAction !== "disabled") {
-      console.log(`[xlogger] browser ${browserAction} ${frontendUrl}`);
+      console.log(`[xlog] browser ${browserAction} ${frontendUrl}`);
     }
   } catch (error) {
-    console.warn(`[xlogger] browser open skipped: ${error.message}`);
+    console.warn(`[xlog] browser open skipped: ${error.message}`);
   }
 
   console.log(
-    `[xlogger] viewer dev ready | frontend ${frontendUrl} | api ${backendUrl}`
+    `[xlog] viewer dev ready | frontend ${frontendUrl} | api ${backendUrl}`
   );
 }
 
 main().catch((error) => {
-  console.error("[xlogger] failed to start viewer dev mode", error);
+  console.error("[xlog] failed to start viewer dev mode", error);
   shutdown(1);
 });

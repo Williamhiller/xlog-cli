@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ensureXLoggerDaemon,
+  ensureXLogDaemon,
   registerProjectRuntime,
   startRuntimeHeartbeat,
   unregisterProjectRuntime
@@ -56,7 +56,7 @@ function bindProcessCleanup(cleanup) {
   };
 }
 
-export class XLoggerWebpackPlugin {
+export class XLogWebpackPlugin {
   constructor(options = {}) {
     this.options = options;
     this.defineApplied = false;
@@ -88,7 +88,7 @@ export class XLoggerWebpackPlugin {
     compiler.options.entry = prependEntry(compiler.options.entry, runtimeEntry);
 
     const ensureServer = async () => {
-      const daemon = await ensureXLoggerDaemon({
+      const daemon = await ensureXLogDaemon({
         host: this.options.host,
         port: this.options.port,
         silent: this.options.silent
@@ -115,11 +115,11 @@ export class XLoggerWebpackPlugin {
 
       if (!this.defineApplied) {
         const definePlugin = new compiler.webpack.DefinePlugin({
-          __XLOGGER_SERVER_URL__: JSON.stringify(this.serverUrl),
-          __XLOGGER_PROJECT_NAME__: JSON.stringify(
+          __XLOG_SERVER_URL__: JSON.stringify(this.serverUrl),
+          __XLOG_PROJECT_NAME__: JSON.stringify(
             this.options.projectName || path.basename(compiler.context || process.cwd())
           ),
-          __XLOGGER_TOOL__: JSON.stringify("webpack")
+          __XLOG_TOOL__: JSON.stringify("webpack")
         });
 
         definePlugin.apply(compiler);
@@ -133,19 +133,19 @@ export class XLoggerWebpackPlugin {
       await this.stopRegistration(compiler);
     };
 
-    compiler.hooks.beforeRun.tapPromise("XLoggerWebpackPlugin", ensureServer);
-    compiler.hooks.watchRun.tapPromise("XLoggerWebpackPlugin", ensureServer);
-    compiler.hooks.watchClose.tap("XLoggerWebpackPlugin", () => {
+    compiler.hooks.beforeRun.tapPromise("XLogWebpackPlugin", ensureServer);
+    compiler.hooks.watchRun.tapPromise("XLogWebpackPlugin", ensureServer);
+    compiler.hooks.watchClose.tap("XLogWebpackPlugin", () => {
       void stopServer();
     });
-    compiler.hooks.failed.tap("XLoggerWebpackPlugin", () => {
+    compiler.hooks.failed.tap("XLogWebpackPlugin", () => {
       void stopServer();
     });
 
     if (compiler.hooks.shutdown?.tapPromise) {
-      compiler.hooks.shutdown.tapPromise("XLoggerWebpackPlugin", stopServer);
+      compiler.hooks.shutdown.tapPromise("XLogWebpackPlugin", stopServer);
     }
   }
 }
 
-export default XLoggerWebpackPlugin;
+export default XLogWebpackPlugin;

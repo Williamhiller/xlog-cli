@@ -397,14 +397,14 @@ export function buildCaptureSharePayload({ capture = null, logs = [] } = {}) {
 
   return {
     v: 1,
-    type: "xlogger.capture.share",
+    type: "xlog.capture.share",
     capture: compactCapture(captureSummary, sortedLogs.length, keyLogs.length),
     keyLogs
   };
 }
 
 export function buildCaptureShareFileName(capture) {
-  const projectName = sanitizeFileName(capture?.project?.name || capture?.project || "xlogger");
+  const projectName = sanitizeFileName(capture?.project?.name || capture?.project || "xlog");
   const captureId = sanitizeFileName(capture?.id || "capture");
   return `${projectName}-${captureId}.json`;
 }

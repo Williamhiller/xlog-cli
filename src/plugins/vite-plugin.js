@@ -1,15 +1,15 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ensureXLoggerDaemon,
+  ensureXLogDaemon,
   registerProjectRuntime,
   startRuntimeHeartbeat,
   unregisterProjectRuntime
 } from "../server/daemon.js";
 
-const AUTO_SERVER_VIRTUAL_MODULE_ID = "virtual:xlogger-client";
+const AUTO_SERVER_VIRTUAL_MODULE_ID = "virtual:xlog-client";
 const RESOLVED_AUTO_SERVER_VIRTUAL_MODULE_ID = `\0${AUTO_SERVER_VIRTUAL_MODULE_ID}`;
-const CLIENT_ONLY_VIRTUAL_MODULE_ID = "virtual:xlogger-client-only";
+const CLIENT_ONLY_VIRTUAL_MODULE_ID = "virtual:xlog-client-only";
 const RESOLVED_CLIENT_ONLY_VIRTUAL_MODULE_ID = `\0${CLIENT_ONLY_VIRTUAL_MODULE_ID}`;
 const SCRIPT_EXT_RE = /\.[cm]?[jt]sx?$/;
 const KNOWN_HTML_SOURCES = new Set(["popup", "sidepanel", "options", "dashboard"]);
@@ -38,12 +38,12 @@ function createRuntimeInstallCode({ serverUrl, projectName, tool }) {
 
 function createRuntimeDefines({ serverUrl, projectName, tool }) {
   const define = {
-    __XLOGGER_PROJECT_NAME__: JSON.stringify(projectName),
-    __XLOGGER_TOOL__: JSON.stringify(tool)
+    __XLOG_PROJECT_NAME__: JSON.stringify(projectName),
+    __XLOG_TOOL__: JSON.stringify(tool)
   };
 
   if (serverUrl) {
-    define.__XLOGGER_SERVER_URL__ = JSON.stringify(serverUrl);
+    define.__XLOG_SERVER_URL__ = JSON.stringify(serverUrl);
   }
 
   return {
@@ -53,9 +53,9 @@ function createRuntimeDefines({ serverUrl, projectName, tool }) {
 
 function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source }) {
   return [
-    `import { installXLogger } from "xlogger/runtime";`,
+    `import { installXLog } from "xlog-cli/runtime";`,
     "",
-    "installXLogger({",
+    "installXLog({",
     `  serverUrl: ${JSON.stringify(serverUrl)},`,
     `  projectName: ${JSON.stringify(projectName)},`,
     `  tool: ${JSON.stringify(tool)},`,
@@ -179,7 +179,7 @@ function createRuntimeInjectionPlugin({
     transform(code, id) {
       const wxtEntrypointSource = getWxtEntrypointSource(id);
       if (wxtEntrypointSource) {
-        if (code.includes("installXLogger(") || code.includes(`from "xlogger/runtime"`)) {
+        if (code.includes("installXLog(") || code.includes(`from "xlog-cli/runtime"`)) {
           return null;
         }
 
@@ -196,7 +196,7 @@ function createRuntimeInjectionPlugin({
         return null;
       }
 
-      if (code.includes(virtualModuleId) || code.includes(`from "xlogger/runtime"`)) {
+      if (code.includes(virtualModuleId) || code.includes(`from "xlog-cli/runtime"`)) {
         return null;
       }
 
@@ -207,7 +207,7 @@ function createRuntimeInjectionPlugin({
     },
 
     transformIndexHtml(html, ctx) {
-      if (html.includes(`from "xlogger/runtime"`)) {
+      if (html.includes(`from "xlog-cli/runtime"`)) {
         return null;
       }
 
@@ -226,7 +226,7 @@ function createRuntimeInjectionPlugin({
   };
 }
 
-export function xloggerVitePlugin(options = {}) {
+export function xlogVitePlugin(options = {}) {
   let configRoot = process.cwd();
   let serverUrl = options.serverUrl;
   let heartbeat = null;
@@ -250,7 +250,7 @@ export function xloggerVitePlugin(options = {}) {
     ...createRuntimeInjectionPlugin({
       virtualModuleId: AUTO_SERVER_VIRTUAL_MODULE_ID,
       resolvedVirtualModuleId: RESOLVED_AUTO_SERVER_VIRTUAL_MODULE_ID,
-      name: "xlogger",
+      name: "xlog",
       loadRuntimeOptions() {
         return {
           serverUrl,
@@ -269,7 +269,7 @@ export function xloggerVitePlugin(options = {}) {
     },
     async configResolved(config) {
       configRoot = config.root || process.cwd();
-      const daemon = await ensureXLoggerDaemon({
+      const daemon = await ensureXLogDaemon({
         host: options.host,
         port: options.port,
         silent: options.silent
@@ -304,14 +304,14 @@ export function xloggerVitePlugin(options = {}) {
   };
 }
 
-export function xloggerViteClientPlugin(options = {}) {
+export function xlogViteClientPlugin(options = {}) {
   let configRoot = process.cwd();
 
   return {
     ...createRuntimeInjectionPlugin({
       virtualModuleId: CLIENT_ONLY_VIRTUAL_MODULE_ID,
       resolvedVirtualModuleId: RESOLVED_CLIENT_ONLY_VIRTUAL_MODULE_ID,
-      name: "xlogger-client",
+      name: "xlog-client",
       loadRuntimeOptions() {
         return {
           serverUrl: options.serverUrl,
@@ -334,4 +334,4 @@ export function xloggerViteClientPlugin(options = {}) {
   };
 }
 
-export default xloggerVitePlugin;
+export default xlogVitePlugin;

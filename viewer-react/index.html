@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <title>__XLOGGER_TITLE__</title>
+    <title>__XLOG_TITLE__</title>
     <script>
       (() => {
         try {
-          const stored = JSON.parse(localStorage.getItem("xlogger.viewer.ui") || "{}");
+          const stored = JSON.parse(localStorage.getItem("xlog.viewer.ui") || "{}");
           const themeMode = stored.themeMode || "auto";
           const resolved =
             themeMode === "auto"

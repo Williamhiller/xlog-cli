@@ -4,13 +4,13 @@ import path from "node:path";
 import process from "node:process";
 import { groupRecordsIntoCaptures } from "../src/server/captures.js";
 import {
-  ensureXLoggerDaemon,
-  getDaemonStatus,
-  startXLoggerDaemon,
-  stopXLoggerDaemon
+  ensureXLogDaemon,
+  getXLogDaemonStatus,
+  startXLogDaemon,
+  stopXLogDaemon
 } from "../src/server/daemon.js";
 import { buildCaptureSharePayload } from "../src/server/share.js";
-import { createXLoggerServer } from "../src/server/server.js";
+import { createXLogServer } from "../src/server/server.js";
 import { FileLogStore } from "../src/server/storage.js";
 
 function readOption(args, name, fallback) {
@@ -34,7 +34,7 @@ function readBaseOptions(args) {
   const root = path.resolve(readOption(args, "--root", process.cwd()));
   const port = Number(readOption(args, "--port", "2718"));
   const host = readOption(args, "--host", "127.0.0.1");
-  const dataDir = readOption(args, "--data-dir", ".xlogger");
+  const dataDir = readOption(args, "--data-dir", ".xlog");
   const projectName = readOption(args, "--project", path.basename(root));
   const strictPort = hasFlag(args, "--strict-port");
   const silent = hasFlag(args, "--silent");
@@ -58,7 +58,7 @@ function createStore(options) {
 }
 
 async function runServe(options) {
-  await createXLoggerServer({
+  await createXLogServer({
     projectRoot: options.root,
     projectName: options.projectName,
     port: options.port,
@@ -207,7 +207,7 @@ async function runDaemon(args, options) {
   };
 
   if (subcommand === "start") {
-    const result = await startXLoggerDaemon(daemonOptions);
+    const result = await startXLogDaemon(daemonOptions);
     printJson({
       ok: true,
       action: result.started ? "started" : "reused",
@@ -218,7 +218,7 @@ async function runDaemon(args, options) {
   }
 
   if (subcommand === "ensure") {
-    const result = await ensureXLoggerDaemon(daemonOptions);
+    const result = await ensureXLogDaemon(daemonOptions);
     printJson({
       ok: true,
       action: result.started ? "started" : "reused",
@@ -229,7 +229,7 @@ async function runDaemon(args, options) {
   }
 
   if (subcommand === "stop") {
-    const result = await stopXLoggerDaemon();
+    const result = await stopXLogDaemon();
     printJson({
       ok: true,
       action: result.alreadyStopped ? "already-stopped" : "stopped",
@@ -241,7 +241,7 @@ async function runDaemon(args, options) {
   }
 
   if (subcommand === "status") {
-    const result = await getDaemonStatus({
+    const result = await getXLogDaemonStatus({
       ...daemonOptions,
       cleanupStale: true
     });

@@ -32,14 +32,14 @@ npm install -g xlog-cli
 http://127.0.0.1:2718/viewer/
 ```
 
-`xlogger` 会自动确保本地共享 daemon 运行在 `http://127.0.0.1:2718`，注册项目，在开发进程存活期间保持心跳，并在退出时注销。
+`xlog-cli` 会自动确保本地共享 daemon 运行在 `http://127.0.0.1:2718`，注册项目，在开发进程存活期间保持心跳，并在退出时注销。
 
-如果你是全局安装，直接用 `xlogger ...`。如果是本地安装，使用 `npx xlogger ...`。
+如果你是全局安装，直接用 `xlog-cli ...`。如果是本地安装，使用 `npx xlog-cli ...`。
 
 ## 给 AI 用
 
 1. 在出问题的应用里接入 `xlog-cli`。
-2. 用 `npx xlogger bugpack` 导出最小可用上下文。
+2. 用 `npx xlog-cli bugpack` 导出最小可用上下文。
 3. 把 bugpack JSON 直接交给你的 AI 工具或 agent。
 4. 让 AI 优先查看 `logs`、`capture`、`session` 和 `summary` 字段。
 
@@ -53,15 +53,15 @@ http://127.0.0.1:2718/viewer/
 ## CLI
 
 ```bash
-npx xlogger daemon start
-npx xlogger daemon status
-npx xlogger daemon stop
-npx xlogger serve
-npx xlogger query --limit 20
-npx xlogger sessions
-npx xlogger bugpack
-npx xlogger bugpack --capture <captureId>
-npx xlogger bugpack --session <sessionId>
+npx xlog-cli daemon start
+npx xlog-cli daemon status
+npx xlog-cli daemon stop
+npx xlog-cli serve
+npx xlog-cli query --limit 20
+npx xlog-cli sessions
+npx xlog-cli bugpack
+npx xlog-cli bugpack --capture <captureId>
+npx xlog-cli bugpack --session <sessionId>
 ```
 
 ## 集成到应用
@@ -69,29 +69,29 @@ npx xlogger bugpack --session <sessionId>
 ### Vite
 
 ```js
-import { xloggerVitePlugin } from "xlog-cli/vite";
+import { xlogVitePlugin } from "xlog-cli/vite";
 
 export default {
-  plugins: [xloggerVitePlugin()]
+  plugins: [xlogVitePlugin()]
 };
 ```
 
 ### Webpack
 
 ```js
-import { XLoggerWebpackPlugin } from "xlog-cli/webpack";
+import { XLogWebpackPlugin } from "xlog-cli/webpack";
 
 export default {
-  plugins: [new XLoggerWebpackPlugin()]
+  plugins: [new XLogWebpackPlugin()]
 };
 ```
 
 ### 手动安装 runtime
 
 ```js
-import { installXLogger } from "xlog-cli/runtime";
+import { installXLog } from "xlog-cli/runtime";
 
-installXLogger({
+installXLog({
   serverUrl: "http://127.0.0.1:2718",
   projectName: "my-app",
   tool: "browser"
@@ -101,17 +101,17 @@ installXLogger({
 ### 手动记录日志
 
 ```js
-import { xloggerConsole } from "xlog-cli/runtime";
+import { xlogConsole } from "xlog-cli/runtime";
 
-xloggerConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request failed", error);
+xlogConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request failed", error);
 ```
 
 ## AI Bugpack
 
 ```bash
-npx xlogger bugpack
-npx xlogger bugpack --capture <captureId>
-npx xlogger bugpack --session <sessionId>
+npx xlog-cli bugpack
+npx xlog-cli bugpack --capture <captureId>
+npx xlog-cli bugpack --session <sessionId>
 ```
 
 ## 存储
@@ -119,7 +119,7 @@ npx xlogger bugpack --session <sessionId>
 日志会写入：
 
 ```text
-.xlogger/projects/<project>/sessions/<date>/<session>.jsonl
+.xlog/projects/<project>/sessions/<date>/<session>.jsonl
 ```
 
 如果可用，xlog-cli 还会维护 SQLite 索引以加快查询。

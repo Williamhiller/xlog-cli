@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const DAEMON_BIN_PATH = path.join(PACKAGE_ROOT, "bin", "xlogger-daemon.js");
+const DAEMON_BIN_PATH = path.join(PACKAGE_ROOT, "bin", "xlog-cli-daemon.js");
 const HEALTH_TIMEOUT_MS = 1500;
 const START_TIMEOUT_MS = 12000;
 const STOP_TIMEOUT_MS = 5000;
@@ -174,8 +174,8 @@ function toPublicState(state, health = null) {
   };
 }
 
-export function resolveDaemonPaths() {
-  const root = path.join(os.homedir(), ".xlogger");
+export function resolveXLogDaemonPaths() {
+  const root = path.join(os.homedir(), ".xlog");
 
   return {
     root,
@@ -184,8 +184,8 @@ export function resolveDaemonPaths() {
   };
 }
 
-export async function readDaemonState() {
-  const paths = resolveDaemonPaths();
+export async function readXLogDaemonState() {
+  const paths = resolveXLogDaemonPaths();
   const state = await readJsonFile(paths.statePath);
   return {
     paths,
@@ -194,13 +194,13 @@ export async function readDaemonState() {
 }
 
 export async function removeDaemonState() {
-  const { paths } = await readDaemonState();
+  const { paths } = await readXLogDaemonState();
   await rm(paths.statePath, { force: true });
   return paths;
 }
 
-export async function getDaemonStatus(options = {}) {
-  const { paths, state } = await readDaemonState();
+export async function getXLogDaemonStatus(options = {}) {
+  const { paths, state } = await readXLogDaemonState();
 
   if (!state) {
     return {
@@ -239,7 +239,7 @@ async function waitForHealthyDaemon(timeoutMs = START_TIMEOUT_MS) {
   let lastStatus = null;
 
   while (Date.now() < deadline) {
-    lastStatus = await getDaemonStatus();
+    lastStatus = await getXLogDaemonStatus();
     if (lastStatus.healthy) {
       return lastStatus;
     }
@@ -266,8 +266,8 @@ function buildSpawnArgs(options = {}) {
   return args;
 }
 
-export async function startXLoggerDaemon(options = {}) {
-  const paths = resolveDaemonPaths();
+export async function startXLogDaemon(options = {}) {
+  const paths = resolveXLogDaemonPaths();
   const existing = await waitForHealthyDaemon(1200);
   if (existing && existing.healthy) {
     return {
@@ -299,10 +299,10 @@ export async function startXLoggerDaemon(options = {}) {
   }
 
   const logExcerpt = await readLogExcerpt(paths.logPath);
-  throw new Error(logExcerpt || `xlogger daemon did not become ready at ${paths.statePath}`);
+  throw new Error(logExcerpt || `xlog daemon did not become ready at ${paths.statePath}`);
 }
 
-export async function ensureXLoggerDaemon(options = {}) {
+export async function ensureXLogDaemon(options = {}) {
   const existing = await waitForHealthyDaemon(3000);
   if (existing && existing.healthy) {
     return {
@@ -312,11 +312,11 @@ export async function ensureXLoggerDaemon(options = {}) {
   }
 
   await removeDaemonState();
-  return startXLoggerDaemon(options);
+  return startXLogDaemon(options);
 }
 
-export async function stopXLoggerDaemon() {
-  const { paths, state } = await readDaemonState();
+export async function stopXLogDaemon() {
+  const { paths, state } = await readXLogDaemonState();
 
   if (!state) {
     return {
@@ -389,7 +389,7 @@ export async function stopXLoggerDaemon() {
 }
 
 export async function writeDaemonStateFile(options = {}, state = {}) {
-  const paths = resolveDaemonPaths();
+  const paths = resolveXLogDaemonPaths();
   const payload = {
     pid: process.pid,
     startedAt: new Date().toISOString(),

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import { createXLoggerServer } from "../src/server/server.js";
+import { createXLogServer } from "../src/server/server.js";
 import { removeDaemonState, writeDaemonStateFile } from "../src/server/daemon.js";
 
 function readOption(args, name, fallback) {
@@ -49,7 +49,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 try {
-  serverState = await createXLoggerServer({
+  serverState = await createXLogServer({
     host,
     port,
     allowFallbackPort: false,
@@ -74,7 +74,7 @@ try {
 
   process.stdin.resume();
 } catch (error) {
-  console.error("[xlogger] failed to start daemon", error);
+  console.error("[xlog] failed to start daemon", error);
   await removeDaemonState();
   process.exit(1);
 }

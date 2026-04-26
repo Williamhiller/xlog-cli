@@ -12,7 +12,7 @@ import {
 } from "./viewer.js";
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
 
-const SERVER_KEY = "__xlogger_server_singleton__";
+const SERVER_KEY = "__xlog_server_singleton__";
 const REGISTRATION_TTL_MS = 30 * 1000;
 const IDLE_SHUTDOWN_DELAY_MS = 15 * 1000;
 
@@ -176,7 +176,7 @@ function serializeRegistrations(registrations) {
   });
 }
 
-export async function createXLoggerServer(options = {}) {
+export async function createXLogServer(options = {}) {
   const existing = getState();
   if (existing && existing.ready) {
     return existing.ready;
@@ -246,7 +246,7 @@ export async function createXLoggerServer(options = {}) {
           res,
           200,
           "text/html; charset=utf-8",
-          await buildViewerHtml({ title: `xlogger | ${projectName}` })
+          await buildViewerHtml({ title: `xlog | ${projectName}` })
         );
         return;
       }
@@ -604,7 +604,7 @@ export async function createXLoggerServer(options = {}) {
 
     if (!options.silent) {
       console.log(
-        `[xlogger] listening on ${state.serverUrl} | viewer ${state.viewerUrl} | store ${state.dataDir}`
+        `[xlog] listening on ${state.serverUrl} | viewer ${state.viewerUrl} | store ${state.dataDir}`
       );
     }
 

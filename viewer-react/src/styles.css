@@ -676,7 +676,7 @@ html[data-theme="light"] .viewer-log-table-row.is-trace {
   grid-template-columns: 14px minmax(0, 1fr) 192px;
   gap: 8px;
   align-items: start;
-  padding: 7px 10px;
+  padding: 0 10px;
   position: relative;
   font-family: var(--font-mono);
   transition:
@@ -724,7 +724,7 @@ html[data-theme="light"] .viewer-log-table-row.is-trace {
 .viewer-console-body {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 0;
 }
 
 .viewer-console-message-block,
@@ -2091,7 +2091,7 @@ html[data-theme="dark"] .viewer-feed-toolbar {
   }
 
   .viewer-console-row {
-    padding: 12px;
+    padding: 0 10px;
     border-radius: 16px;
   }
 }

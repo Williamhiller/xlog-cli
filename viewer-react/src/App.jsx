@@ -13,8 +13,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import DetailDrawer from "./components/DetailDrawer.jsx";
 
 const DEFAULT_LOG_LIMIT = 600;
-const UI_STORAGE_KEY = "xlogger.viewer.ui";
-const SELF_TEST_SESSION_KEY = "xlogger.viewer.self-test.v1";
+const UI_STORAGE_KEY = "xlog.viewer.ui";
+const SELF_TEST_SESSION_KEY = "xlog.viewer.self-test.v1";
 const QUICK_FILTERS = [
   { key: "all", label: "All" },
   { key: "warn", label: "Warnings" },
@@ -1105,7 +1105,7 @@ export default function App({ initialThemeMode }) {
                     <i className="ri-pulse-ai-line" />
                   </div>
                   <div className={`viewer-sidebar-brand-copy ${ui.sessionsCollapsed ? "is-collapsed" : ""}`}>
-                    <div className="viewer-sidebar-brand-title">xlogger</div>
+                    <div className="viewer-sidebar-brand-title">xlog</div>
                     <div className="viewer-sidebar-brand-subtitle">
                       {storage ? storage.queryDriver : "booting"}
                     </div>

@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <title>__XLOGGER_TITLE__</title>
+    <title>__XLOG_TITLE__</title>
     <script>
       (() => {
         try {
-          const stored = JSON.parse(localStorage.getItem("xlogger.viewer.ui") || "{}");
+          const stored = JSON.parse(localStorage.getItem("xlog.viewer.ui") || "{}");
           const themeMode = stored.themeMode || "auto";
           const resolved =
             themeMode === "auto"
@@ -34,7 +34,7 @@
           <div class="brand-pill">
             <span class="brand-dot"></span>
             <i class="ri-terminal-box-line"></i>
-            <span class="brand-wordmark">xlogger</span>
+            <span class="brand-wordmark">xlog</span>
           </div>
           <span class="status-pill" id="live-state"><i class="ri-radar-line"></i><span>connecting</span></span>
           <span class="status-pill status-pill--muted" id="storage-driver"><i class="ri-database-2-line"></i><span>storage pending</span></span>

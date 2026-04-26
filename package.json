@@ -1,6 +1,6 @@
 {
   "name": "xlog-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first development logger with browser interception, file storage, and an HTML viewer.",
   "type": "module",
   "files": [
@@ -20,7 +20,7 @@
     "url": "https://github.com/Williamhiller/xlog-cli/issues"
   },
   "bin": {
-    "xlogger": "bin/xlogger.js"
+    "xlog-cli": "bin/xlog-cli.js"
   },
   "exports": {
     ".": "./src/index.js",
@@ -34,7 +34,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "serve": "node ./bin/xlogger.js serve",
+    "serve": "node ./bin/xlog-cli.js serve",
     "dev:viewer": "node ./bin/dev-viewer.js",
     "dev:viewer:ui": "vite --config viewer-react/vite.config.js",
     "build:viewer": "vite build --config viewer-react/vite.config.js"

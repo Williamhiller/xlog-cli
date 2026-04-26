@@ -7,9 +7,9 @@ import {
 import { serializeArgs, serializeValue, argsToText } from "../shared/serialize.js";
 import { captureStack, resolveCallsite } from "../shared/stack.js";
 
-const GLOBAL_KEY = "__xlogger_state__";
+const GLOBAL_KEY = "__xlog_state__";
 const KEEPALIVE_BODY_LIMIT = 60 * 1024;
-const AUTO_INSTALL_GUARD_KEY = "__xlogger_auto_installing__";
+const AUTO_INSTALL_GUARD_KEY = "__xlog_auto_installing__";
 const DEFAULT_CAPTURE_TTL_MS = 5 * 60 * 1000;
 
 function createId() {
@@ -17,7 +17,7 @@ function createId() {
     return crypto.randomUUID();
   }
 
-  return `xlogger-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `xlog-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function normalizeServerUrl(input) {
@@ -42,7 +42,33 @@ function normalizeProjectName(input) {
 }
 
 function getCaptureStorageKey(projectName) {
-  return `__xlogger_capture__:${String(projectName || "unknown-project").trim().toLowerCase()}`;
+  return `__xlog_capture__:${String(projectName || "unknown-project").trim().toLowerCase()}`;
+}
+
+function getInstalledState() {
+  return globalThis[GLOBAL_KEY] || null;
+}
+
+function setInstalledState(value) {
+  if (value) {
+    globalThis[GLOBAL_KEY] = value;
+    return;
+  }
+
+  delete globalThis[GLOBAL_KEY];
+}
+
+function getAutoInstallGuard() {
+  return globalThis[AUTO_INSTALL_GUARD_KEY] || false;
+}
+
+function setAutoInstallGuard(value) {
+  if (value) {
+    globalThis[AUTO_INSTALL_GUARD_KEY] = true;
+    return;
+  }
+
+  delete globalThis[AUTO_INSTALL_GUARD_KEY];
 }
 
 function byteLength(value) {
@@ -59,12 +85,22 @@ function getGlobalConfig(name) {
 
 function getInjectedConfig(name) {
   switch (name) {
-    case "__XLOGGER_SERVER_URL__":
-      return typeof __XLOGGER_SERVER_URL__ !== "undefined" ? __XLOGGER_SERVER_URL__ : undefined;
-    case "__XLOGGER_PROJECT_NAME__":
-      return typeof __XLOGGER_PROJECT_NAME__ !== "undefined" ? __XLOGGER_PROJECT_NAME__ : undefined;
-    case "__XLOGGER_TOOL__":
-      return typeof __XLOGGER_TOOL__ !== "undefined" ? __XLOGGER_TOOL__ : undefined;
+    case "__XLOG_SERVER_URL__":
+      return typeof __XLOG_SERVER_URL__ !== "undefined"
+        ? __XLOG_SERVER_URL__
+        : undefined;
+    case "__XLOG_PROJECT_NAME__":
+      return typeof __XLOG_PROJECT_NAME__ !== "undefined"
+        ? __XLOG_PROJECT_NAME__
+        : undefined;
+    case "__XLOG_TOOL__":
+      return typeof __XLOG_TOOL__ !== "undefined"
+        ? __XLOG_TOOL__
+        : undefined;
+    case "__XLOG_SOURCE__":
+      return typeof __XLOG_SOURCE__ !== "undefined"
+        ? __XLOG_SOURCE__
+        : undefined;
     default:
       return undefined;
   }
@@ -229,6 +265,14 @@ async function writeSharedCapture(key, value) {
   return false;
 }
 
+async function readCapture(projectName) {
+  return await readSharedCapture(getCaptureStorageKey(projectName));
+}
+
+async function writeCapture(projectName, value) {
+  await writeSharedCapture(getCaptureStorageKey(projectName), value);
+}
+
 function isCaptureActive(capture, nowMs, ttlMs) {
   if (!capture || !capture.id) {
     return false;
@@ -249,9 +293,8 @@ function assignCapture(state, capture) {
 }
 
 async function resolveSharedCapture(state, { forceRotate = false } = {}) {
-  const key = getCaptureStorageKey(state.projectName);
   const nowMs = Date.now();
-  const existing = await readSharedCapture(key);
+  const existing = await readCapture(state.projectName);
 
   if (!forceRotate && isCaptureActive(existing, nowMs, state.captureTtlMs)) {
     assignCapture(state, existing);
@@ -265,8 +308,8 @@ async function resolveSharedCapture(state, { forceRotate = false } = {}) {
     projectName: state.projectName
   };
 
-  await writeSharedCapture(key, candidate);
-  const stored = (await readSharedCapture(key)) || candidate;
+  await writeCapture(state.projectName, candidate);
+  const stored = (await readCapture(state.projectName)) || candidate;
   assignCapture(state, stored);
   return stored;
 }
@@ -275,7 +318,6 @@ async function ensureCapture(state) {
   const nowMs = Date.now();
 
   if (state.captureId && nowMs - state.captureUpdatedAtMs <= state.captureTtlMs) {
-    const key = getCaptureStorageKey(state.projectName);
     const updatedCapture = {
       id: state.captureId,
       startedAt: state.captureStartedAt || new Date(nowMs).toISOString(),
@@ -284,7 +326,7 @@ async function ensureCapture(state) {
     };
 
     assignCapture(state, updatedCapture);
-    await writeSharedCapture(key, updatedCapture);
+    await writeCapture(state.projectName, updatedCapture);
     return updatedCapture;
   }
 
@@ -415,33 +457,32 @@ function nowTimestamp() {
 }
 
 function maybeAutoInstallFromConsole(meta) {
-  if (globalThis[GLOBAL_KEY] || globalThis[AUTO_INSTALL_GUARD_KEY]) {
-    return globalThis[GLOBAL_KEY] || null;
+  if (getInstalledState() || getAutoInstallGuard()) {
+    return getInstalledState();
   }
 
-  globalThis[AUTO_INSTALL_GUARD_KEY] = true;
+  setAutoInstallGuard(true);
 
   try {
     const inferredProjectName =
-      getResolvedConfig("__XLOGGER_PROJECT_NAME__") ||
-      inferProjectNameFromMetaFile(meta?.file);
+      getResolvedConfig("__XLOG_PROJECT_NAME__") || inferProjectNameFromMetaFile(meta?.file);
 
-    installXLogger({
-      serverUrl: getResolvedConfig("__XLOGGER_SERVER_URL__"),
+    installXLog({
+      serverUrl: getResolvedConfig("__XLOG_SERVER_URL__"),
       projectName: inferredProjectName,
-      tool: getResolvedConfig("__XLOGGER_TOOL__")
+      tool: getResolvedConfig("__XLOG_TOOL__")
     });
   } catch {
     // Fall through to the native console path below.
   } finally {
-    delete globalThis[AUTO_INSTALL_GUARD_KEY];
+    setAutoInstallGuard(false);
   }
 
-  return globalThis[GLOBAL_KEY] || null;
+  return getInstalledState();
 }
 
-export function xloggerConsole(level, meta, ...args) {
-  const state = globalThis[GLOBAL_KEY] || maybeAutoInstallFromConsole(meta);
+export function xlogConsole(level, meta, ...args) {
+  const state = getInstalledState() || maybeAutoInstallFromConsole(meta);
 
   if (state && typeof state.captureEntry === "function") {
     return state.captureEntry({
@@ -458,7 +499,7 @@ export function xloggerConsole(level, meta, ...args) {
   return fallback.apply(console, args);
 }
 
-export function installXLogger(options = {}) {
+export function installXLog(options = {}) {
   if (!hasRuntimeScope() || typeof console === "undefined") {
     return {
       flush: async () => {},
@@ -467,8 +508,8 @@ export function installXLogger(options = {}) {
     };
   }
 
-  if (globalThis[GLOBAL_KEY] && globalThis[GLOBAL_KEY].installed) {
-    return globalThis[GLOBAL_KEY].api;
+  if (getInstalledState() && getInstalledState().installed) {
+    return getInstalledState().api;
   }
 
   const startedAt = new Date().toISOString();
@@ -481,18 +522,18 @@ export function installXLogger(options = {}) {
     captureUpdatedAtMs: 0,
     captureTtlMs: Number(options.captureTtlMs || DEFAULT_CAPTURE_TTL_MS),
     source: detectRuntimeSource(
-      options.source || getResolvedConfig("__XLOGGER_SOURCE__")
+      options.source || getResolvedConfig("__XLOG_SOURCE__")
     ),
     projectName:
       normalizeProjectName(options.projectName) ||
-      normalizeProjectName(getResolvedConfig("__XLOGGER_PROJECT_NAME__")) ||
+      normalizeProjectName(getResolvedConfig("__XLOG_PROJECT_NAME__")) ||
       getDefaultProjectName(),
     tool:
       options.tool ||
-      getResolvedConfig("__XLOGGER_TOOL__") ||
+      getResolvedConfig("__XLOG_TOOL__") ||
       (typeof document !== "undefined" ? "browser" : "worker"),
     serverUrl: normalizeServerUrl(
-      options.serverUrl || getResolvedConfig("__XLOGGER_SERVER_URL__")
+      options.serverUrl || getResolvedConfig("__XLOG_SERVER_URL__")
     ),
     flushInterval: Number(options.flushInterval || 500),
     maxBatchSize: Number(options.maxBatchSize || 20),
@@ -762,7 +803,7 @@ export function installXLogger(options = {}) {
         }
       }
 
-      delete globalThis[GLOBAL_KEY];
+      setInstalledState(null);
     },
     getState() {
       return {
@@ -780,6 +821,6 @@ export function installXLogger(options = {}) {
   };
 
   state.api = api;
-  globalThis[GLOBAL_KEY] = state;
+  setInstalledState(state);
   return api;
 }

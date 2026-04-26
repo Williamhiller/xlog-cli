@@ -32,14 +32,14 @@ When the shared daemon is running, open the viewer at:
 http://127.0.0.1:2718/viewer/
 ```
 
-`xlogger` automatically ensures a shared local daemon on `http://127.0.0.1:2718`, registers the project, keeps heartbeats alive while your dev process runs, and unregisters on exit.
+`xlog-cli` automatically ensures a shared local daemon on `http://127.0.0.1:2718`, registers the project, keeps heartbeats alive while your dev process runs, and unregisters on exit.
 
-If you installed globally, use `xlogger ...`. If you installed locally, use `npx xlogger ...`.
+If you installed globally, use `xlog-cli ...`. If you installed locally, use `npx xlog-cli ...`.
 
 ## For AI
 
 1. Capture the bug with `xlog-cli` in the app you are debugging.
-2. Export the smallest useful context with `npx xlogger bugpack`.
+2. Export the smallest useful context with `npx xlog-cli bugpack`.
 3. Pass the bugpack JSON to your AI tool or agent.
 4. Ask the AI to inspect `logs`, `capture`, `session`, and the `summary` fields first.
 
@@ -53,15 +53,15 @@ Best results:
 ## CLI
 
 ```bash
-npx xlogger daemon start
-npx xlogger daemon status
-npx xlogger daemon stop
-npx xlogger serve
-npx xlogger query --limit 20
-npx xlogger sessions
-npx xlogger bugpack
-npx xlogger bugpack --capture <captureId>
-npx xlogger bugpack --session <sessionId>
+npx xlog-cli daemon start
+npx xlog-cli daemon status
+npx xlog-cli daemon stop
+npx xlog-cli serve
+npx xlog-cli query --limit 20
+npx xlog-cli sessions
+npx xlog-cli bugpack
+npx xlog-cli bugpack --capture <captureId>
+npx xlog-cli bugpack --session <sessionId>
 ```
 
 ## Integrate In An App
@@ -69,29 +69,29 @@ npx xlogger bugpack --session <sessionId>
 ### Vite
 
 ```js
-import { xloggerVitePlugin } from "xlog-cli/vite";
+import { xlogVitePlugin } from "xlog-cli/vite";
 
 export default {
-  plugins: [xloggerVitePlugin()]
+  plugins: [xlogVitePlugin()]
 };
 ```
 
 ### Webpack
 
 ```js
-import { XLoggerWebpackPlugin } from "xlog-cli/webpack";
+import { XLogWebpackPlugin } from "xlog-cli/webpack";
 
 export default {
-  plugins: [new XLoggerWebpackPlugin()]
+  plugins: [new XLogWebpackPlugin()]
 };
 ```
 
 ### Manual runtime install
 
 ```js
-import { installXLogger } from "xlog-cli/runtime";
+import { installXLog } from "xlog-cli/runtime";
 
-installXLogger({
+installXLog({
   serverUrl: "http://127.0.0.1:2718",
   projectName: "my-app",
   tool: "browser"
@@ -101,17 +101,17 @@ installXLogger({
 ### Manual logging
 
 ```js
-import { xloggerConsole } from "xlog-cli/runtime";
+import { xlogConsole } from "xlog-cli/runtime";
 
-xloggerConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request failed", error);
+xlogConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request failed", error);
 ```
 
 ## AI Bugpacks
 
 ```bash
-npx xlogger bugpack
-npx xlogger bugpack --capture <captureId>
-npx xlogger bugpack --session <sessionId>
+npx xlog-cli bugpack
+npx xlog-cli bugpack --capture <captureId>
+npx xlog-cli bugpack --session <sessionId>
 ```
 
 ## Storage
@@ -119,7 +119,7 @@ npx xlogger bugpack --session <sessionId>
 Logs are written under:
 
 ```text
-.xlogger/projects/<project>/sessions/<date>/<session>.jsonl
+.xlog/projects/<project>/sessions/<date>/<session>.jsonl
 ```
 
 If available, xlog-cli also maintains a SQLite index for faster queries.

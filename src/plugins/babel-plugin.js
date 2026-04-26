@@ -95,19 +95,19 @@ function inferFunctionName(path) {
   return null;
 }
 
-export default function xloggerBabelPlugin(babel) {
+export default function xlogBabelPlugin(babel) {
   const t = babel.types;
 
   return {
-    name: "xlogger-babel-plugin",
+    name: "xlog-babel-plugin",
     visitor: {
       Program: {
         enter(programPath, state) {
-          state.xloggerHelperId = programPath.scope.generateUidIdentifier("xloggerConsole");
-          state.xloggerHasUsage = false;
+          state.xlogHelperId = programPath.scope.generateUidIdentifier("xlogConsole");
+          state.xlogHasUsage = false;
         },
         exit(programPath, state) {
-          if (!state.xloggerHasUsage) {
+          if (!state.xlogHasUsage) {
             return;
           }
 
@@ -116,11 +116,11 @@ export default function xloggerBabelPlugin(babel) {
             t.importDeclaration(
               [
                 t.importSpecifier(
-                  t.identifier(state.xloggerHelperId.name),
-                  t.identifier("xloggerConsole")
+                  t.identifier(state.xlogHelperId.name),
+                  t.identifier("xlogConsole")
                 )
               ],
-              t.stringLiteral("xlogger/runtime")
+              t.stringLiteral("xlog-cli/runtime")
             )
           );
         }
@@ -165,10 +165,10 @@ export default function xloggerBabelPlugin(babel) {
 
         const metaObject = t.objectExpression(metaProperties);
 
-        state.xloggerHasUsage = true;
+        state.xlogHasUsage = true;
 
         path.replaceWith(
-          t.callExpression(t.identifier(state.xloggerHelperId.name), [
+          t.callExpression(t.identifier(state.xlogHelperId.name), [
             t.stringLiteral(method),
             metaObject,
             ...path.node.arguments

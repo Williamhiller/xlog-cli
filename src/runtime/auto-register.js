@@ -1,8 +1,8 @@
-import { installXLogger } from "./interceptor.js";
+import { installXLog } from "./interceptor.js";
 
-installXLogger({
-  serverUrl: typeof __XLOGGER_SERVER_URL__ !== "undefined" ? __XLOGGER_SERVER_URL__ : undefined,
+installXLog({
+  serverUrl: typeof __XLOG_SERVER_URL__ !== "undefined" ? __XLOG_SERVER_URL__ : undefined,
   projectName:
-    typeof __XLOGGER_PROJECT_NAME__ !== "undefined" ? __XLOGGER_PROJECT_NAME__ : undefined,
-  tool: typeof __XLOGGER_TOOL__ !== "undefined" ? __XLOGGER_TOOL__ : undefined
+    typeof __XLOG_PROJECT_NAME__ !== "undefined" ? __XLOG_PROJECT_NAME__ : undefined,
+  tool: typeof __XLOG_TOOL__ !== "undefined" ? __XLOG_TOOL__ : undefined
 });

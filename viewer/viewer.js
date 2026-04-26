@@ -8,7 +8,7 @@ const {
 } = window.FloatingUIDOM || {};
 
 const DEFAULT_LOG_LIMIT = 600;
-const UI_STORAGE_KEY = "xlogger.viewer.ui";
+const UI_STORAGE_KEY = "xlog.viewer.ui";
 const THEME_MEDIA = window.matchMedia("(prefers-color-scheme: dark)");
 
 const state = {
@@ -545,7 +545,7 @@ function renderLogs() {
   if (!state.logs.length) {
     clearSelectedLog();
     els.logs.innerHTML =
-      '<div class="empty-block"><i class="ri-search-eye-line"></i> No logs match the current filters. Clear filters or start your app with xlogger attached.</div>';
+      '<div class="empty-block"><i class="ri-search-eye-line"></i> No logs match the current filters. Clear filters or start your app with xlog attached.</div>';
     renderStats();
     renderDetails();
     return;

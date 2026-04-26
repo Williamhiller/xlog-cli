@@ -1,6 +1,6 @@
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 2718;
-export const DEFAULT_DATA_DIR = ".xlogger";
+export const DEFAULT_DATA_DIR = ".xlog";
 export const SCHEMA_VERSION = 1;
 
 export const CAPTURED_CONSOLE_METHODS = [
@@ -25,9 +25,9 @@ export const CAPTURED_CONSOLE_METHODS = [
 ];
 
 export const INTERNAL_STACK_HINTS = [
-  "xlogger",
-  "installXLogger",
-  "xloggerConsole",
-  "__xlogger",
-  "virtual:xlogger"
+  "xlog",
+  "installXLog",
+  "xlogConsole",
+  "__xlog",
+  "virtual:xlog"
 ];

@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { xloggerViteClientPlugin } from "../src/plugins/vite-plugin.js";
-import xloggerBabelPlugin from "../src/plugins/babel-plugin.js";
+import { xlogViteClientPlugin } from "../src/plugins/vite-plugin.js";
+import xlogBabelPlugin from "../src/plugins/babel-plugin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_VIEWER_HOST = "127.0.0.1";
@@ -15,23 +15,23 @@ function readPort(value, fallback) {
   return Number.isFinite(port) && port > 0 ? port : fallback;
 }
 
-const viewerHost = process.env.XLOGGER_VIEWER_HOST || DEFAULT_VIEWER_HOST;
-const viewerPort = readPort(process.env.XLOGGER_VIEWER_PORT, DEFAULT_VIEWER_PORT);
-const backendUrl = process.env.XLOGGER_VIEWER_BACKEND_URL || DEFAULT_BACKEND_URL;
+const viewerHost = process.env.XLOG_VIEWER_HOST || DEFAULT_VIEWER_HOST;
+const viewerPort = readPort(process.env.XLOG_VIEWER_PORT, DEFAULT_VIEWER_PORT);
+const backendUrl = process.env.XLOG_VIEWER_BACKEND_URL || DEFAULT_BACKEND_URL;
 
 export default defineConfig(({ command }) => ({
   base: "/viewer/",
   plugins: [
-    xloggerViteClientPlugin({
+    xlogViteClientPlugin({
       serverUrl: backendUrl,
-      projectName: "xlogger-viewer",
+      projectName: "xlog-viewer",
       tool: "vite"
     }),
     react(
       command === "serve"
         ? {
             babel: {
-              plugins: [xloggerBabelPlugin]
+              plugins: [xlogBabelPlugin]
             }
           }
         : {}

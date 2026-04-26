@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LEGACY_VIEWER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../viewer");
+const VIEWER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../viewer");
 const REACT_VIEWER_DIST_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../viewer-react/dist"
@@ -26,7 +26,7 @@ function escapeHtml(value) {
 }
 
 export function getViewerAssetPath(name) {
-  return path.join(LEGACY_VIEWER_ROOT, name);
+  return path.join(VIEWER_ROOT, name);
 }
 
 async function readViewerAsset(name) {
@@ -65,14 +65,17 @@ export async function getBuiltViewerAsset(assetPath = "index.html") {
   return readFile(fullPath);
 }
 
-export async function buildViewerHtml({ title = "xlogger" } = {}) {
+export async function buildViewerHtml({ title = "xlog" } = {}) {
   const builtIndex = await getBuiltViewerAsset("index.html");
   if (builtIndex) {
-    return builtIndex.toString("utf8").replaceAll("__XLOGGER_TITLE__", escapeHtml(title));
+    return builtIndex
+      .toString("utf8")
+      .replaceAll("__XLOG_TITLE__", escapeHtml(title));
   }
 
   const template = await readViewerAsset("index.html");
-  return template.replaceAll("__XLOGGER_TITLE__", escapeHtml(title));
+  return template
+    .replaceAll("__XLOG_TITLE__", escapeHtml(title));
 }
 
 export async function getViewerTextAsset(name) {
