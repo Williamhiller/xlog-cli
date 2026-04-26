@@ -1,10 +1,26 @@
 {
-  "name": "xlogger",
-  "version": "0.1.0",
+  "name": "xlog-cli",
+  "version": "0.1.1",
   "description": "Local-first development logger with browser interception, file storage, and an HTML viewer.",
   "type": "module",
+  "files": [
+    "bin",
+    "src",
+    "viewer",
+    "viewer-react/dist",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Williamhiller/xlog-cli.git"
+  },
+  "homepage": "https://github.com/Williamhiller/xlog-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Williamhiller/xlog-cli/issues"
+  },
   "bin": {
-    "xlogger": "./bin/xlogger.js"
+    "xlogger": "bin/xlogger.js"
   },
   "exports": {
     ".": "./src/index.js",

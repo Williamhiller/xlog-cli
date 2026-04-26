@@ -1,101 +1,75 @@
-# xLogger
+# xlog-cli
+
+English | [简体中文](README.zh-CN.md)
 
 Local-first browser logging with capture grouping, a viewer, and AI-ready bugpacks.
 
-## What It Does
+Built for AI workflows: collect logs locally, package the right capture into a compact bugpack, and feed that payload directly into an LLM or agent.
 
-- Captures `console.*`, `window.error`, and `unhandledrejection`
-- Stores logs locally in `.xlogger`
-- Runs a local viewer at `/viewer`
-- Groups logs into captures automatically
-- Exposes compact JSON bugpacks for AI analysis
-- Uses one shared local daemon for all active projects
+npm package: [xlog-cli](https://www.npmjs.com/package/xlog-cli)
+
+## Install
+
+```bash
+npm install xlog-cli
+```
+
+Optional global CLI:
+
+```bash
+npm install -g xlog-cli
+```
 
 ## Quick Start
 
-1. Install xLogger in your app.
-2. Enable the Vite or Webpack plugin.
-3. Start your normal dev process.
+1. Install `xlog-cli` in your app.
+2. Add the Vite or Webpack plugin, or install the runtime manually.
+3. Start your normal dev server.
 
-xLogger will automatically ensure a shared local daemon on `http://127.0.0.1:2718`, register the project, keep a heartbeat alive while the dev process runs, and unregister on exit.
+When the shared daemon is running, open the viewer at:
 
-If all projects exit, the daemon shuts itself down.
-
-## AI Analysis
-
-Get the latest bugpack:
-
-```bash
-node ./bin/xlogger.js bugpack --latest
+```text
+http://127.0.0.1:2718/viewer/
 ```
 
-Get a specific capture:
+`xlogger` automatically ensures a shared local daemon on `http://127.0.0.1:2718`, registers the project, keeps heartbeats alive while your dev process runs, and unregisters on exit.
 
-```bash
-node ./bin/xlogger.js bugpack --capture <captureId>
-```
+If you installed globally, use `xlogger ...`. If you installed locally, use `npx xlogger ...`.
 
-Get the latest capture inside a session:
+## For AI
 
-```bash
-node ./bin/xlogger.js bugpack --session <sessionId>
-```
+1. Capture the bug with `xlog-cli` in the app you are debugging.
+2. Export the smallest useful context with `npx xlogger bugpack`.
+3. Pass the bugpack JSON to your AI tool or agent.
+4. Ask the AI to inspect `logs`, `capture`, `session`, and the `summary` fields first.
+
+Best results:
+
+- Prefer one capture per issue.
+- Keep `projectName` stable.
+- Include only the logs around the failure window.
+- Feed the AI the bugpack JSON instead of a screenshot or raw console dump.
 
 ## CLI
 
-### Shared daemon
-
 ```bash
-node ./bin/xlogger.js daemon start
-node ./bin/xlogger.js daemon status
-node ./bin/xlogger.js daemon stop
-```
-
-Normal development does not require manual `daemon start`.
-
-Global daemon state is stored in:
-
-```text
-~/.xlogger/daemon.json
-```
-
-Global daemon logs are stored in:
-
-```text
-~/.xlogger/daemon.log
-```
-
-### Foreground server
-
-```bash
-node ./bin/xlogger.js serve
-```
-
-Use `serve` for direct foreground debugging.
-
-### Raw queries
-
-```bash
-node ./bin/xlogger.js query --limit 20
-node ./bin/xlogger.js sessions
-```
-
-## Viewer Dev
-
-```bash
-npm run dev:viewer
-npm run dev:viewer:ui
-npm run build:viewer
+npx xlogger daemon start
+npx xlogger daemon status
+npx xlogger daemon stop
+npx xlogger serve
+npx xlogger query --limit 20
+npx xlogger sessions
+npx xlogger bugpack
+npx xlogger bugpack --capture <captureId>
+npx xlogger bugpack --session <sessionId>
 ```
 
 ## Integrate In An App
 
 ### Vite
 
-Use the plugin so the project auto-registers with the shared daemon.
-
 ```js
-import { xloggerVitePlugin } from "xlogger/vite";
+import { xloggerVitePlugin } from "xlog-cli/vite";
 
 export default {
   plugins: [xloggerVitePlugin()]
@@ -104,10 +78,8 @@ export default {
 
 ### Webpack
 
-Use the plugin so the project auto-registers with the shared daemon.
-
 ```js
-import { XLoggerWebpackPlugin } from "xlogger/webpack";
+import { XLoggerWebpackPlugin } from "xlog-cli/webpack";
 
 export default {
   plugins: [new XLoggerWebpackPlugin()]
@@ -117,7 +89,7 @@ export default {
 ### Manual runtime install
 
 ```js
-import { installXLogger } from "xlogger/runtime";
+import { installXLogger } from "xlog-cli/runtime";
 
 installXLogger({
   serverUrl: "http://127.0.0.1:2718",
@@ -126,15 +98,31 @@ installXLogger({
 });
 ```
 
-If the shared daemon disappears, runtime logging stops sending network logs and leaves the native `console` behavior intact.
-
-## Manual Logging
+### Manual logging
 
 ```js
-import { xloggerConsole } from "xlogger/runtime";
+import { xloggerConsole } from "xlog-cli/runtime";
 
 xloggerConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request failed", error);
 ```
+
+## AI Bugpacks
+
+```bash
+npx xlogger bugpack
+npx xlogger bugpack --capture <captureId>
+npx xlogger bugpack --session <sessionId>
+```
+
+## Storage
+
+Logs are written under:
+
+```text
+.xlogger/projects/<project>/sessions/<date>/<session>.jsonl
+```
+
+If available, xlog-cli also maintains a SQLite index for faster queries.
 
 ## API
 
@@ -148,24 +136,22 @@ xloggerConsole("error", { file: import.meta.url, line: 12, column: 3 }, "Request
 - `POST /api/x-log`
 - `GET /api/captures/:captureId/share.json`
 
-## Storage
-
-Logs are written under:
-
-```text
-.xlogger/projects/<project>/sessions/<date>/<session>.jsonl
-```
-
-If available, xLogger also maintains a SQLite index for faster queries.
-
 ## Package Exports
 
-- `xlogger`
-- `xlogger/server`
-- `xlogger/runtime`
-- `xlogger/vite`
-- `xlogger/webpack`
-- `xlogger/babel-plugin`
+- `xlog-cli`
+- `xlog-cli/server`
+- `xlog-cli/runtime`
+- `xlog-cli/vite`
+- `xlog-cli/webpack`
+- `xlog-cli/babel-plugin`
+
+## Viewer Dev
+
+```bash
+npm run dev:viewer
+npm run dev:viewer:ui
+npm run build:viewer
+```
 
 ## Notes
 
