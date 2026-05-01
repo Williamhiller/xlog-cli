@@ -1,11 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  ensureXLogDaemon,
-  registerProjectRuntime,
-  startRuntimeHeartbeat,
-  unregisterProjectRuntime
-} from "../server/daemon.js";
+import { createXLogServer } from "../server/server.js";
 
 const AUTO_SERVER_VIRTUAL_MODULE_ID = "virtual:xlog-client";
 const RESOLVED_AUTO_SERVER_VIRTUAL_MODULE_ID = `\0${AUTO_SERVER_VIRTUAL_MODULE_ID}`;
@@ -229,20 +224,13 @@ function createRuntimeInjectionPlugin({
 export function xlogVitePlugin(options = {}) {
   let configRoot = process.cwd();
   let serverUrl = options.serverUrl;
-  let heartbeat = null;
+  let serverState = null;
   let releaseProcessCleanup = null;
 
   const stopRegistration = async () => {
-    heartbeat?.stop();
-    heartbeat = null;
-
-    if (serverUrl) {
-      await unregisterProjectRuntime(serverUrl, {
-        projectRoot: options.projectRoot || configRoot,
-        projectName: options.projectName || path.basename(configRoot),
-        dataDir: options.dataDir,
-        tool: "vite"
-      });
+    if (serverState && !options.serverUrl) {
+      await serverState.close();
+      serverState = null;
     }
   };
 
@@ -269,27 +257,20 @@ export function xlogVitePlugin(options = {}) {
     },
     async configResolved(config) {
       configRoot = config.root || process.cwd();
-      const daemon = await ensureXLogDaemon({
-        host: options.host,
-        port: options.port,
-        silent: options.silent
-      });
-      serverUrl = daemon.state?.serverUrl || options.serverUrl;
-
-      await registerProjectRuntime(serverUrl, {
-        projectRoot: options.projectRoot || configRoot,
-        projectName: options.projectName || path.basename(configRoot),
-        dataDir: options.dataDir,
-        tool: "vite"
-      });
-
-      heartbeat?.stop();
-      heartbeat = startRuntimeHeartbeat(serverUrl, {
-        projectRoot: options.projectRoot || configRoot,
-        projectName: options.projectName || path.basename(configRoot),
-        dataDir: options.dataDir,
-        tool: "vite"
-      });
+      if (!options.serverUrl) {
+        serverState = await createXLogServer({
+          projectRoot: options.projectRoot || configRoot,
+          projectName: options.projectName || path.basename(configRoot),
+          dataDir: options.dataDir,
+          host: options.host,
+          port: options.port,
+          allowFallbackPort: options.strictPort !== true,
+          silent: options.silent
+        });
+        serverUrl = serverState.serverUrl;
+      } else {
+        serverUrl = options.serverUrl;
+      }
 
       releaseProcessCleanup?.();
       releaseProcessCleanup = bindProcessCleanup(stopRegistration);

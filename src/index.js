@@ -1,13 +1,15 @@
 export {
   createXLogServer
 } from "./server/server.js";
-export {
-  ensureXLogDaemon,
-  getXLogDaemonStatus,
-  startXLogDaemon,
-  stopXLogDaemon
-} from "./server/daemon.js";
 export { FileLogStore } from "./server/storage.js";
+export {
+  buildCaptureSharePayload,
+  buildCaptureShareFileName,
+  scoreLog,
+  isToolingNoise,
+  compactShareLog,
+  PROFILES
+} from "./server/share.js";
 export {
   installXLog,
   xlogConsole

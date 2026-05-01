@@ -1,11 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  ensureXLogDaemon,
-  registerProjectRuntime,
-  startRuntimeHeartbeat,
-  unregisterProjectRuntime
-} from "../server/daemon.js";
+import { createXLogServer } from "../server/server.js";
 
 function prependEntry(entry, runtimeEntry) {
   if (!entry) {
@@ -61,21 +56,14 @@ export class XLogWebpackPlugin {
     this.options = options;
     this.defineApplied = false;
     this.serverUrl = null;
-    this.heartbeat = null;
+    this.serverState = null;
     this.releaseProcessCleanup = null;
   }
 
   async stopRegistration(compiler) {
-    this.heartbeat?.stop();
-    this.heartbeat = null;
-
-    if (this.serverUrl) {
-      await unregisterProjectRuntime(this.serverUrl, {
-        projectRoot: this.options.projectRoot || compiler.context || process.cwd(),
-        projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
-        dataDir: this.options.dataDir,
-        tool: "webpack"
-      });
+    if (this.serverState && !this.options.serverUrl) {
+      await this.serverState.close();
+      this.serverState = null;
     }
   }
 
@@ -88,27 +76,20 @@ export class XLogWebpackPlugin {
     compiler.options.entry = prependEntry(compiler.options.entry, runtimeEntry);
 
     const ensureServer = async () => {
-      const daemon = await ensureXLogDaemon({
-        host: this.options.host,
-        port: this.options.port,
-        silent: this.options.silent
-      });
-      this.serverUrl = daemon.state?.serverUrl;
-
-      await registerProjectRuntime(this.serverUrl, {
-        projectRoot: this.options.projectRoot || compiler.context || process.cwd(),
-        projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
-        dataDir: this.options.dataDir,
-        tool: "webpack"
-      });
-
-      this.heartbeat?.stop();
-      this.heartbeat = startRuntimeHeartbeat(this.serverUrl, {
-        projectRoot: this.options.projectRoot || compiler.context || process.cwd(),
-        projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
-        dataDir: this.options.dataDir,
-        tool: "webpack"
-      });
+      if (this.options.serverUrl) {
+        this.serverUrl = this.options.serverUrl;
+      } else {
+        this.serverState = await createXLogServer({
+          projectRoot: this.options.projectRoot || compiler.context || process.cwd(),
+          projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
+          dataDir: this.options.dataDir,
+          host: this.options.host,
+          port: this.options.port,
+          allowFallbackPort: this.options.strictPort !== true,
+          silent: this.options.silent
+        });
+        this.serverUrl = this.serverState.serverUrl;
+      }
 
       this.releaseProcessCleanup?.();
       this.releaseProcessCleanup = bindProcessCleanup(() => this.stopRegistration(compiler));

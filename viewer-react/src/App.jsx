@@ -1,16 +1,7 @@
-import {
-  App as AntdApp,
-  Button,
-  ConfigProvider,
-  Dropdown,
-  Empty,
-  Input,
-  Select,
-  Tooltip,
-  theme as antdTheme
-} from "antd";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DetailDrawer from "./components/DetailDrawer.jsx";
+import { Icon } from "./icons.jsx";
+import { showToast } from "./toast.js";
 
 const DEFAULT_LOG_LIMIT = 600;
 const UI_STORAGE_KEY = "xlog.viewer.ui";
@@ -19,17 +10,6 @@ const QUICK_FILTERS = [
   { key: "all", label: "All" },
   { key: "warn", label: "Warnings" },
   { key: "error", label: "Errors" }
-];
-const TOOLING_NOISE_PATTERNS = [
-  "/@vite/client",
-  "/@react-refresh",
-  "reload-html-",
-  "[wxt]",
-  "vite connected",
-  "vite connecting",
-  "vite ping",
-  "hmr",
-  "hot updated"
 ];
 
 function padMilliseconds(value) {
@@ -202,23 +182,6 @@ function getCallsiteSourceLabel(log) {
   return "no-callsite";
 }
 
-function buildNoiseHaystack(log) {
-  return [
-    log?.text || "",
-    log?.callsite?.file || "",
-    log?.callsite?.url || "",
-    log?.stack?.raw || "",
-    log?.page?.url || ""
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function isToolingNoise(log) {
-  const haystack = buildNoiseHaystack(log);
-  return TOOLING_NOISE_PATTERNS.some((pattern) => haystack.includes(pattern));
-}
-
 function getCaptureName(capture) {
   return capture?.project?.name || "Unknown project";
 }
@@ -232,6 +195,14 @@ function buildLogQuery(filters, options = {}) {
   params.set("limit", String(DEFAULT_LOG_LIMIT));
 
   for (const [key, value] of Object.entries(filters)) {
+    if (Array.isArray(value)) {
+      const joined = value.join(",");
+      if (joined) {
+        params.set(key, joined);
+      }
+      continue;
+    }
+
     if (typeof value === "string") {
       const trimmed = value.trim();
       if (trimmed) {
@@ -279,17 +250,13 @@ function loadStoredUi(initialThemeMode) {
     return {
       sessionsCollapsed: false,
       detailOpen: false,
-      themeMode: parsed.themeMode || initialThemeMode || "auto",
-      logView: parsed.logView === "table" ? "table" : "entries",
-      hideToolingNoise: parsed.hideToolingNoise !== false
+      themeMode: parsed.themeMode || initialThemeMode || "auto"
     };
   } catch {
     return {
       sessionsCollapsed: false,
       detailOpen: false,
-      themeMode: initialThemeMode || "auto",
-      logView: "entries",
-      hideToolingNoise: true
+      themeMode: initialThemeMode || "auto"
     };
   }
 }
@@ -298,19 +265,18 @@ function persistUi(ui) {
   localStorage.setItem(
     UI_STORAGE_KEY,
     JSON.stringify({
-      themeMode: ui.themeMode,
-      logView: ui.logView,
-      hideToolingNoise: ui.hideToolingNoise
+      themeMode: ui.themeMode
     })
   );
 }
 
 function getQuickFilterKey(filters) {
-  if (filters.level === "error") {
+  const levels = filters.level || [];
+  if (levels.length === 1 && levels[0] === "error") {
     return "error";
   }
 
-  if (filters.level === "warn") {
+  if (levels.length === 1 && levels[0] === "warn") {
     return "warn";
   }
 
@@ -553,7 +519,7 @@ function isExpandableLog(log, parts) {
   return /\bat\s+\S+|\bhttps?:\/\/|\bError:/.test(preview) && preview.length > 120;
 }
 
-function getLevelIcon(level) {
+function getLevelIconName(level) {
   switch (level) {
     case "error":
       return "ri-close-circle-line";
@@ -663,12 +629,78 @@ function runViewerSelfTest(trigger = "manual") {
   emitSyntheticUnhandledRejection(trigger);
 }
 
+
+function useDebouncedValue(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+function FilterMultiSelect({ options, selected, placeholder, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  function toggleOption(option) {
+    const next = selected.includes(option)
+      ? selected.filter((item) => item !== option)
+      : [...selected, option];
+    onChange(next);
+  }
+
+  const summary = selected.length === 0
+    ? placeholder
+    : selected.join(", ");
+
+  return (
+    <div className="viewer-multiselect" ref={ref}>
+      <button
+        type="button"
+        className={`viewer-multiselect-trigger ${selected.length ? "has-selection" : ""}`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className="viewer-multiselect-label">{summary}</span>
+        <Icon name="ri-arrow-down-s-line" />
+      </button>
+      {open ? (
+        <div className="viewer-multiselect-dropdown">
+          {options.map((option) => (
+            <label key={option} className="viewer-multiselect-option">
+              <input
+                type="checkbox"
+                checked={selected.includes(option)}
+                onChange={() => toggleOption(option)}
+              />
+              <span>{option}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function App({ initialThemeMode }) {
   const [ui, setUi] = useState(() => loadStoredUi(initialThemeMode));
   const [filters, setFilters] = useState({
     q: "",
-    level: "",
-    kind: "",
+    level: [],
+    kind: [],
     file: ""
   });
   const [storage, setStorage] = useState(null);
@@ -676,14 +708,15 @@ export default function App({ initialThemeMode }) {
   const [logs, setLogs] = useState([]);
   const [selectedCaptureId, setSelectedCaptureId] = useState("");
   const [selectedLogId, setSelectedLogId] = useState("");
-  const [expandedLogIds, setExpandedLogIds] = useState([]);
+  const [expandedLogIds, setExpandedLogIds] = useState(() => new Set());
   const [streamState, setStreamState] = useState("connecting");
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [deletingCaptureId, setDeletingCaptureId] = useState("");
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const filterPanelRef = useRef(null);
   const filterButtonRef = useRef(null);
-  const { message } = AntdApp.useApp();
+  const debouncedQuery = useDebouncedValue(filters.q, 250);
 
   const resolvedTheme = useMemo(() => {
     if (ui.themeMode === "auto") {
@@ -692,21 +725,6 @@ export default function App({ initialThemeMode }) {
 
     return ui.themeMode;
   }, [ui.themeMode]);
-
-  const configTheme = useMemo(
-    () => ({
-      algorithm:
-        resolvedTheme === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-      token: {
-        colorPrimary: resolvedTheme === "dark" ? "#f59f62" : "#c9672a",
-        colorInfo: resolvedTheme === "dark" ? "#6f8fff" : "#335dff",
-        borderRadius: 14,
-        fontFamily:
-          '"Avenir Next", "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif'
-      }
-    }),
-    [resolvedTheme]
-  );
 
   function closeSelectedLog() {
     setSelectedLogId("");
@@ -746,8 +764,8 @@ export default function App({ initialThemeMode }) {
     closeSelectedLog();
     setFilters({
       q: "",
-      level: "",
-      kind: "",
+      level: [],
+      kind: [],
       file: ""
     });
   }
@@ -756,14 +774,14 @@ export default function App({ initialThemeMode }) {
     closeSelectedLog();
     setFilters((current) => {
       if (nextKey === "warn") {
-        return { ...current, level: "warn", kind: "" };
+        return { ...current, level: ["warn"], kind: [] };
       }
 
       if (nextKey === "error") {
-        return { ...current, level: "error", kind: "" };
+        return { ...current, level: ["error"], kind: [] };
       }
 
-      return { ...current, level: "", kind: "" };
+      return { ...current, level: [], kind: [] };
     });
   }
 
@@ -783,7 +801,8 @@ export default function App({ initialThemeMode }) {
     let cancelled = false;
 
     async function load() {
-      const { sessionData, logData } = await readCurrentData(filters, selectedCaptureId);
+      const activeFilters = { ...filters, q: debouncedQuery };
+      const { sessionData, logData } = await readCurrentData(activeFilters, selectedCaptureId);
 
       if (cancelled) {
         return;
@@ -794,14 +813,14 @@ export default function App({ initialThemeMode }) {
 
     load().catch((error) => {
       if (!cancelled) {
-        message.error(error.message);
+        showToast(error.message, "error");
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [filters, selectedCaptureId, message]);
+  }, [filters.level, filters.kind, filters.file, debouncedQuery, selectedCaptureId]);
 
   useEffect(() => {
     if (!isFilterPanelOpen) {
@@ -835,8 +854,34 @@ export default function App({ initialThemeMode }) {
   }, [isFilterPanelOpen]);
 
   useEffect(() => {
+    if (!isThemeMenuOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      const wrap = event.target.closest(".viewer-theme-select-wrap");
+      if (wrap) return;
+      setIsThemeMenuOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsThemeMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isThemeMenuOpen]);
+
+  useEffect(() => {
     const scrollNodes = [
-      ...document.querySelectorAll(".viewer-log-surface-scroll, .viewer-log-table-wrap")
+      ...document.querySelectorAll(".viewer-log-surface-scroll")
     ];
 
     if (!scrollNodes.length) {
@@ -879,7 +924,7 @@ export default function App({ initialThemeMode }) {
         window.clearTimeout(timer);
       }
     };
-  }, [ui.logView]);
+  }, []);
 
   useEffect(() => {
     const source = new EventSource("/api/stream");
@@ -890,7 +935,7 @@ export default function App({ initialThemeMode }) {
 
     source.addEventListener("message", () => {
       setStreamState("live");
-    readCurrentData(filters, selectedCaptureId)
+    readCurrentData({ ...filters, q: debouncedQuery }, selectedCaptureId)
       .then(({ sessionData, logData }) => {
         applyFetchedData(sessionData, logData);
       })
@@ -906,16 +951,11 @@ export default function App({ initialThemeMode }) {
     return () => {
       source.close();
     };
-  }, [filters, selectedCaptureId]);
+  }, [filters.level, filters.kind, filters.file, debouncedQuery, selectedCaptureId]);
 
-  const visibleLogs = useMemo(
-    () => logs.filter((log) => !ui.hideToolingNoise || !isToolingNoise(log)),
-    [logs, ui.hideToolingNoise]
-  );
-  const expandedLogIdSet = useMemo(() => new Set(expandedLogIds), [expandedLogIds]);
-  const hiddenNoiseCount = logs.length - visibleLogs.length;
+  const visibleLogs = logs;
+  const expandedLogIdSet = expandedLogIds;
   const selectedLog = visibleLogs.find((log) => log.id === selectedLogId) || null;
-  const selectedCapture = captures.find((capture) => capture.id === selectedCaptureId) || null;
   const detailVisible = ui.detailOpen && Boolean(selectedLog);
   const logCountLabel = `${visibleLogs.length} ${visibleLogs.length === 1 ? "entry" : "entries"}`;
   const activeQuickFilter = getQuickFilterKey(filters);
@@ -934,8 +974,16 @@ export default function App({ initialThemeMode }) {
     const visibleIds = new Set(visibleLogs.map((log) => log.id));
 
     setExpandedLogIds((current) => {
-      const next = current.filter((id) => visibleIds.has(id));
-      return next.length === current.length ? current : next;
+      let changed = false;
+      const next = new Set();
+      for (const id of current) {
+        if (visibleIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
     });
   }, [visibleLogs]);
 
@@ -956,9 +1004,9 @@ export default function App({ initialThemeMode }) {
   async function handleCopy(text) {
     try {
       await navigator.clipboard.writeText(text || "");
-      message.success("Copied");
+      showToast("Copied", "success");
     } catch {
-      message.error("Copy failed");
+      showToast("Copy failed", "error");
     }
   }
 
@@ -969,9 +1017,9 @@ export default function App({ initialThemeMode }) {
 
     try {
       await navigator.clipboard.writeText(buildCaptureShareUrl(capture.id));
-      message.success("Share link copied");
+      showToast("Share link copied", "success");
     } catch {
-      message.error("Share copy failed");
+      showToast("Share copy failed", "error");
     }
   }
 
@@ -1000,13 +1048,13 @@ export default function App({ initialThemeMode }) {
       if (wasSelected) {
         closeSelectedLog();
         setLogs([]);
-        setExpandedLogIds([]);
+        setExpandedLogIds(new Set());
         setSelectedCaptureId(nextCaptures[0]?.id || "");
       }
 
-      message.success("Capture deleted");
+      showToast("Capture deleted", "success");
     } catch (error) {
-      message.error(error?.message || "Delete failed");
+      showToast(error?.message || "Delete failed", "error");
     } finally {
       setDeletingCaptureId((current) => (current === capture.id ? "" : current));
     }
@@ -1037,11 +1085,11 @@ export default function App({ initialThemeMode }) {
       const { sessionData, logData } = await readCurrentData(filters, "");
       applyFetchedData(sessionData, logData);
       closeSelectedLog();
-      setExpandedLogIds([]);
+      setExpandedLogIds(new Set());
       setSelectedCaptureId("");
-      message.success("All logs cleared");
+      showToast("All logs cleared", "success");
     } catch (error) {
-      message.error(error?.message || "Clear failed");
+      showToast(error?.message || "Clear failed", "error");
     } finally {
       setClearingLogs(false);
     }
@@ -1056,16 +1104,16 @@ export default function App({ initialThemeMode }) {
   const toggleSidebar = () => {
     setUi((current) => ({ ...current, sessionsCollapsed: !current.sessionsCollapsed }));
   };
-  const toggleLogView = () => {
-    setUi((current) => ({
-      ...current,
-      logView: current.logView === "entries" ? "table" : "entries"
-    }));
-  };
   const toggleLogExpanded = (logId) => {
-    setExpandedLogIds((current) =>
-      current.includes(logId) ? current.filter((id) => id !== logId) : [...current, logId]
-    );
+    setExpandedLogIds((current) => {
+      const next = new Set(current);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -1088,21 +1136,20 @@ export default function App({ initialThemeMode }) {
   }, [isDevViewer]);
 
   return (
-    <ConfigProvider theme={configTheme}>
       <div className={`viewer-shell ${ui.sessionsCollapsed ? "is-sidebar-collapsed" : ""}`}>
         <aside className="viewer-sidebar">
           <div className="viewer-sidebar-top">
-            <Tooltip title={ui.sessionsCollapsed ? "Expand sidebar" : "Collapse sidebar"}>
               <button
                 type="button"
                 className="viewer-sidebar-brand-button"
                 onClick={toggleSidebar}
                 aria-label={ui.sessionsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                 aria-expanded={!ui.sessionsCollapsed}
+                title={ui.sessionsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               >
                 <div className="viewer-sidebar-brand">
                   <div className="viewer-sidebar-brand-mark">
-                    <i className="ri-pulse-ai-line" />
+                    <Icon name="ri-pulse-ai-line" />
                   </div>
                   <div className={`viewer-sidebar-brand-copy ${ui.sessionsCollapsed ? "is-collapsed" : ""}`}>
                     <div className="viewer-sidebar-brand-title">xlog</div>
@@ -1112,25 +1159,24 @@ export default function App({ initialThemeMode }) {
                   </div>
                 </div>
               </button>
-            </Tooltip>
           </div>
 
           <div className="viewer-sidebar-group viewer-sidebar-group--sessions">
             {ui.sessionsCollapsed ? (
               <div className="viewer-sidebar-mini-list">
                 {captures.slice(0, 8).map((capture) => (
-                  <Tooltip key={capture.id} title={getCaptureName(capture)} placement="right">
-                    <button
-                      className={`viewer-session-mini ${selectedCaptureId === capture.id ? "is-active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        closeSelectedLog();
-                        setSelectedCaptureId((current) => (current === capture.id ? "" : capture.id));
-                      }}
-                    >
-                      {getCaptureName(capture).slice(0, 1).toUpperCase()}
-                    </button>
-                  </Tooltip>
+                  <button
+                    key={capture.id}
+                    className={`viewer-session-mini ${selectedCaptureId === capture.id ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      closeSelectedLog();
+                      setSelectedCaptureId((current) => (current === capture.id ? "" : capture.id));
+                    }}
+                    title={getCaptureName(capture)}
+                  >
+                    {getCaptureName(capture).slice(0, 1).toUpperCase()}
+                  </button>
                 ))}
               </div>
             ) : (
@@ -1156,34 +1202,30 @@ export default function App({ initialThemeMode }) {
                         <div className="viewer-session-item-meta">{formatCaptureSubtitle(capture)}</div>
                       </button>
                       <div className="viewer-session-actions">
-                        <Tooltip title="Copy share link" placement="right">
-                          <Button
-                            size="small"
-                            type="text"
-                            className="viewer-session-action-button viewer-session-share-button"
-                            icon={<i className="ri-share-line" />}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void copyShareLink(capture);
-                            }}
-                            aria-label="Copy share link"
-                          />
-                        </Tooltip>
-                        <Tooltip title="Delete capture" placement="right">
-                          <Button
-                            size="small"
-                            type="text"
-                            danger
-                            className="viewer-session-action-button viewer-session-delete-button"
-                            icon={<i className="ri-delete-bin-6-line" />}
-                            loading={deletingCaptureId === capture.id}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void deleteCapture(capture);
-                            }}
-                            aria-label="Delete capture"
-                          />
-                        </Tooltip>
+                        <button
+                          type="button"
+                          className="viewer-session-action-button viewer-session-share-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void copyShareLink(capture);
+                          }}
+                          aria-label="Copy share link"
+                          title="Copy share link"
+                        >
+                          <Icon name="ri-share-line" />
+                        </button>
+                        <button
+                          type="button"
+                          className={`viewer-session-action-button viewer-session-delete-button ${deletingCaptureId === capture.id ? "is-loading" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void deleteCapture(capture);
+                          }}
+                          aria-label="Delete capture"
+                          title="Delete capture"
+                        >
+                          <Icon name="ri-delete-bin-6-line" />
+                        </button>
                       </div>
                     </div>
                   ))
@@ -1196,40 +1238,46 @@ export default function App({ initialThemeMode }) {
 
           <div className="viewer-sidebar-footer">
             <div className="viewer-sidebar-footer-actions">
-              <Tooltip title="Clear all logs">
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  className="viewer-sidebar-footer-button viewer-sidebar-clear-button"
-                  icon={<i className="ri-delete-bin-6-line" />}
-                  loading={clearingLogs}
-                  onClick={() => {
-                    void clearAllLogs();
-                  }}
-                  aria-label="Clear all logs"
-                />
-              </Tooltip>
+              <button
+                type="button"
+                className={`viewer-sidebar-footer-button viewer-sidebar-clear-button ${clearingLogs ? "is-loading" : ""}`}
+                onClick={() => {
+                  void clearAllLogs();
+                }}
+                aria-label="Clear all logs"
+                title="Clear all logs"
+              >
+                <Icon name="ri-delete-bin-6-line" />
+              </button>
 
-              <Tooltip title="Appearance">
-                <Dropdown
-                  menu={{
-                    items: themeMenuItems,
-                    selectable: true,
-                    selectedKeys: [ui.themeMode],
-                    onClick: ({ key }) => setUi((current) => ({ ...current, themeMode: key }))
-                  }}
-                  trigger={["click"]}
+              <div className="viewer-theme-select-wrap">
+                <button
+                  type="button"
+                  className="viewer-sidebar-footer-button viewer-sidebar-theme-button"
+                  onClick={() => setIsThemeMenuOpen((v) => !v)}
+                  aria-label="Appearance"
+                  title="Appearance"
                 >
-                  <Button
-                    size="small"
-                    type="text"
-                    className="viewer-sidebar-footer-button viewer-sidebar-theme-button"
-                    icon={<i className="ri-contrast-2-line" />}
-                    aria-label="Appearance"
-                  />
-                </Dropdown>
-              </Tooltip>
+                  <Icon name="ri-contrast-2-line" />
+                </button>
+                {isThemeMenuOpen ? (
+                  <div className="viewer-theme-dropdown">
+                    {themeMenuItems.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`viewer-theme-option ${ui.themeMode === item.key ? "is-selected" : ""}`}
+                        onClick={() => {
+                          setUi((current) => ({ ...current, themeMode: item.key }));
+                          setIsThemeMenuOpen(false);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </aside>
@@ -1255,15 +1303,25 @@ export default function App({ initialThemeMode }) {
 	                  ))}
 	                </div>
 
-	                <Input
-	                  size="large"
-	                  allowClear
-	                  className="viewer-search-input viewer-search-input--toolbar"
-	                  prefix={<i className="ri-search-2-line" aria-hidden="true" />}
-	                  placeholder="Search logs, args, source or session"
-	                  value={filters.q}
-	                  onChange={(event) => updateFilters({ q: event.target.value })}
-	                />
+	                <div className="viewer-search-input viewer-search-input--toolbar">
+	                  <span className="viewer-search-prefix"><Icon name="ri-search-2-line" /></span>
+	                  <input
+	                    type="text"
+	                    placeholder="Search logs, args, source or session"
+	                    value={filters.q}
+	                    onChange={(event) => updateFilters({ q: event.target.value })}
+	                  />
+	                  {filters.q ? (
+	                    <button
+	                      type="button"
+	                      className="viewer-search-clear"
+	                      onClick={() => updateFilters({ q: "" })}
+	                      aria-label="Clear search"
+	                    >
+	                      <Icon name="ri-close-line" />
+	                    </button>
+	                  ) : null}
+	                </div>
 
 	                <div className="viewer-toolbar-right">
 	                  <div className="viewer-toolbar-status" aria-live="polite">
@@ -1272,46 +1330,18 @@ export default function App({ initialThemeMode }) {
 	                  </div>
 
 	                  <div className="viewer-toolbar-actions">
-	                    <Tooltip title={isFilterPanelOpen ? "Close filters" : "Open filters"}>
 	                      <button
 	                        ref={filterButtonRef}
 	                        type="button"
-	                        className={`viewer-icon-button ${isFilterPanelOpen ? "is-active" : ""} ${filters.kind || filters.file ? "has-accent" : ""}`}
+	                        className={`viewer-icon-button ${isFilterPanelOpen ? "is-active" : ""} ${(filters.kind && filters.kind.length) || filters.file ? "has-accent" : ""}`}
 	                        aria-label="Open filters"
 	                        aria-haspopup="dialog"
 	                        aria-expanded={isFilterPanelOpen}
 	                        onClick={() => setIsFilterPanelOpen((current) => !current)}
+	                        title={isFilterPanelOpen ? "Close filters" : "Open filters"}
 	                      >
-	                        <i className="ri-filter-3-line" aria-hidden="true" />
+	                        <Icon name="ri-filter-3-line" />
 	                      </button>
-	                    </Tooltip>
-
-	                    <Tooltip title={ui.hideToolingNoise ? "Show tooling noise" : "Hide tooling noise"}>
-	                      <button
-	                        type="button"
-	                        className={`viewer-icon-button ${ui.hideToolingNoise ? "is-active" : ""}`}
-	                        aria-label={ui.hideToolingNoise ? "Show tooling noise" : "Hide tooling noise"}
-	                        onClick={() =>
-	                          setUi((current) => ({ ...current, hideToolingNoise: !current.hideToolingNoise }))
-	                        }
-	                      >
-	                        <i className="ri-equalizer-2-line" aria-hidden="true" />
-	                      </button>
-	                    </Tooltip>
-
-	                    <Tooltip title={ui.logView === "entries" ? "Switch to table view" : "Switch to entries view"}>
-	                      <button
-	                        type="button"
-	                        className={`viewer-icon-button ${ui.logView === "table" ? "is-active" : ""}`}
-	                        aria-label={ui.logView === "entries" ? "Switch to table view" : "Switch to entries view"}
-	                        onClick={toggleLogView}
-	                      >
-	                        <i
-	                          className={ui.logView === "entries" ? "ri-list-unordered" : "ri-layout-grid-line"}
-	                          aria-hidden="true"
-	                        />
-	                      </button>
-	                    </Tooltip>
 	                  </div>
 	                </div>
 	              </div>
@@ -1343,65 +1373,55 @@ export default function App({ initialThemeMode }) {
 	                  <div className="viewer-filter-popover-grid">
 	                    <label className="viewer-filter-field">
 	                      <span>Level</span>
-	                      <Select
-	                        value={filters.level}
-	                        onChange={(value) => updateFilters({ level: value })}
-	                        options={[
-	                          { value: "", label: "All levels" },
-	                          { value: "error", label: "error" },
-	                          { value: "warn", label: "warn" },
-	                          { value: "info", label: "info" },
-	                          { value: "log", label: "log" },
-	                          { value: "debug", label: "debug" },
-	                          { value: "trace", label: "trace" }
-	                        ]}
+	                      <FilterMultiSelect
+	                        options={["error", "warn", "info", "log", "debug", "trace"]}
+	                        selected={filters.level}
+	                        placeholder="All levels"
+	                        onChange={(next) => updateFilters({ level: next })}
 	                      />
 	                    </label>
 
 	                    <label className="viewer-filter-field">
 	                      <span>Kind</span>
-	                      <Select
-	                        value={filters.kind}
-	                        onChange={(value) => updateFilters({ kind: value })}
-	                        options={[
-	                          { value: "", label: "All kinds" },
-	                          { value: "console", label: "console" },
-	                          { value: "window.error", label: "window.error" },
-	                          { value: "unhandledrejection", label: "unhandledrejection" }
-	                        ]}
+	                      <FilterMultiSelect
+	                        options={["console", "window.error", "unhandledrejection"]}
+	                        selected={filters.kind}
+	                        placeholder="All kinds"
+	                        onChange={(next) => updateFilters({ kind: next })}
 	                      />
 	                    </label>
 
 	                    <label className="viewer-filter-field viewer-filter-field--wide">
 	                      <span>File or module</span>
-	                      <Input
-	                        allowClear
-	                        placeholder="src/components/..."
-	                        value={filters.file}
-	                        onChange={(event) => updateFilters({ file: event.target.value })}
-	                      />
+	                      <div className="viewer-filter-input-wrap">
+	                        <input
+	                          type="text"
+	                          placeholder="src/components/..."
+	                          value={filters.file}
+	                          onChange={(event) => updateFilters({ file: event.target.value })}
+	                        />
+	                        {filters.file ? (
+	                          <button
+	                            type="button"
+	                            className="viewer-filter-input-clear"
+	                            onClick={() => updateFilters({ file: "" })}
+	                            aria-label="Clear file filter"
+	                          >
+	                            <Icon name="ri-close-line" />
+	                          </button>
+	                        ) : null}
+	                      </div>
 	                    </label>
 	                  </div>
 
 	                  <div className="viewer-filter-popover-footer">
-	                    <button
-	                      type="button"
-	                      className={`viewer-filter-toggle ${ui.hideToolingNoise ? "is-active" : ""}`}
-	                      onClick={() =>
-	                        setUi((current) => ({ ...current, hideToolingNoise: !current.hideToolingNoise }))
-	                      }
-	                    >
-	                      <i className="ri-magic-line" aria-hidden="true" />
-	                      {ui.hideToolingNoise ? "Tooling hidden" : "Tooling visible"}
-	                    </button>
-
 	                    {isDevViewer ? (
 	                      <button
 	                        type="button"
 	                        className="viewer-filter-toggle"
 	                        onClick={() => runViewerSelfTest("manual-burst")}
 	                      >
-	                        <i className="ri-flask-line" aria-hidden="true" />
+	                        <Icon name="ri-flask-line" />
 	                        Sample Logs
 	                      </button>
 	                    ) : null}
@@ -1413,23 +1433,21 @@ export default function App({ initialThemeMode }) {
 	            <div className="viewer-log-surface">
 	              <div className="viewer-log-surface-scroll">
 	                  {visibleLogs.length ? (
-	                    ui.logView === "entries" ? (
 	                      <div className="viewer-console-list">
                         {visibleLogs.map((log) => {
                           const parts = getMessageParts(log);
                           const sourceLabel = getCallsiteSourceLabel(log);
                           const runtimeSourceLabel = getRuntimeSourceLabel(log);
-                          const noisy = isToolingNoise(log);
                           const source = formatSource(log);
                           const expandable = isExpandableLog(log, parts);
                           const expanded = expandedLogIdSet.has(log.id);
                           return (
                             <div
                               key={log.id}
-                              className={`viewer-console-row is-${log.level} ${selectedLog?.id === log.id ? "is-selected" : ""} ${noisy ? "is-noise" : ""}`}
+                              className={`viewer-console-row is-${log.level} ${selectedLog?.id === log.id ? "is-selected" : ""}`}
                             >
                               <div className="viewer-console-leading">
-                                <i className={`viewer-console-icon ${getLevelIcon(log.level)}`} />
+                                <span className="viewer-console-icon"><Icon name={getLevelIconName(log.level)} /></span>
                               </div>
 
                               <div className="viewer-console-body">
@@ -1450,7 +1468,7 @@ export default function App({ initialThemeMode }) {
                                     </div>
                                     <span className="viewer-console-expand-hint">
                                       <i
-                                        className={expanded ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"}
+                                        
                                         aria-hidden="true"
                                       />
                                       {expanded ? "Collapse" : "Expand"}
@@ -1490,80 +1508,19 @@ export default function App({ initialThemeMode }) {
                                   aria-label="View details"
                                   title="View details"
                                 >
-                                  <i className="ri-eye-line" aria-hidden="true" />
+                                  <Icon name="ri-eye-line" />
                                 </button>
                               </div>
                             </div>
                           );
                         })}
                       </div>
-                    ) : (
-                      <div className="viewer-log-table-wrap">
-                        <div className="viewer-log-table">
-                          <div className="viewer-log-table-head">
-                            <span>Level</span>
-                            <span>Message</span>
-                            <span>Context</span>
-                            <span>Source</span>
-                            <span>Time</span>
-                            <span>Action</span>
-                          </div>
-
-                          {visibleLogs.map((log) => {
-                            const parts = getMessageParts(log);
-                            const sourceLabel = getCallsiteSourceLabel(log);
-                            const runtimeSourceLabel = getRuntimeSourceLabel(log);
-                            const noisy = isToolingNoise(log);
-                            return (
-                              <div
-                                key={log.id}
-                                className={`viewer-log-table-row is-${log.level} ${selectedLog?.id === log.id ? "is-selected" : ""} ${noisy ? "is-noise" : ""}`}
-                              >
-                                <span className="viewer-log-table-cell viewer-log-table-level">
-                                  <i className={getLevelIcon(log.level)} />
-                                  <strong>{log.level || "log"}</strong>
-                                </span>
-                                <span className="viewer-log-table-cell viewer-log-table-message" title={parts.headline}>
-                                  {parts.headline}
-                                </span>
-                                <span className="viewer-log-table-cell viewer-log-table-context">
-                                  <span>{log.kind || "console"}</span>
-                                  <span>{runtimeSourceLabel}</span>
-                                  <span>{sourceLabel}</span>
-                                  <span>{log.session?.id || "global"}</span>
-                                  <span>{log.callsite?.functionName || "anonymous"}</span>
-                                </span>
-                                <span className="viewer-log-table-cell viewer-log-table-source" title={formatSource(log)}>
-                                  {formatSource(log)}
-                                </span>
-                                <span className="viewer-log-table-cell viewer-log-table-time">
-                                  {formatDateTime(log.occurredAtMs || log.occurredAt)}
-                                </span>
-                                <span className="viewer-log-table-cell viewer-log-table-action">
-                                  <button
-                                    type="button"
-                                    className="viewer-log-table-detail-button"
-                                    onClick={() => openLogDetails(log.id)}
-                                  >
-                                    Details
-                                  </button>
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-	                    )
 	                  ) : (
 	                    <div className="viewer-empty-state">
-	                      <Empty
-	                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-	                        description={
-	                          hiddenNoiseCount && ui.hideToolingNoise
-	                            ? `All visible logs are currently hidden as tooling noise (${hiddenNoiseCount}).`
-	                            : "No logs match the current filters."
-	                        }
-	                      />
+	                      <div className="viewer-empty-icon">&#x1F4ED;</div>
+	                      <div className="viewer-empty-text">
+	                        No logs match the current filters.
+	                      </div>
 	                    </div>
 	                  )}
 	              </div>
@@ -1582,9 +1539,7 @@ export default function App({ initialThemeMode }) {
           buildContextLines={buildContextLines}
           getRuntimeSourceLabel={getRuntimeSourceLabel}
           getCallsiteSourceLabel={getCallsiteSourceLabel}
-          isToolingNoise={isToolingNoise}
         />
       </div>
-    </ConfigProvider>
   );
 }

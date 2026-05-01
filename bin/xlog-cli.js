@@ -3,12 +3,6 @@
 import path from "node:path";
 import process from "node:process";
 import { groupRecordsIntoCaptures } from "../src/server/captures.js";
-import {
-  ensureXLogDaemon,
-  getXLogDaemonStatus,
-  startXLogDaemon,
-  stopXLogDaemon
-} from "../src/server/daemon.js";
 import { buildCaptureSharePayload } from "../src/server/share.js";
 import { createXLogServer } from "../src/server/server.js";
 import { FileLogStore } from "../src/server/storage.js";
@@ -195,76 +189,45 @@ async function runBugpack(args, options) {
   }
 }
 
-async function runDaemon(args, options) {
-  const subcommand = args[1] || "status";
-  const daemonOptions = {
-    projectRoot: options.root,
+function parseMs(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+async function runMcp(args, options) {
+  const { createXLogMcpServer } = await import("../src/mcp/server.js");
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+
+  const retentionMs = parseMs(readOption(args, "--retention", ""), 5 * 60 * 1000);
+  const captureDurationMs = parseMs(readOption(args, "--capture-duration", ""), 60 * 1000);
+  const captureGapMs = parseMs(readOption(args, "--capture-gap", ""), 10 * 1000);
+
+  const { server, store } = createXLogMcpServer({
+    root: options.root,
     dataDir: options.dataDir,
-    projectName: options.projectName,
-    host: options.host,
-    port: options.port,
-    silent: options.silent
-  };
+    retentionMs,
+    captureDurationMs,
+    captureGapMs
+  });
 
-  if (subcommand === "start") {
-    const result = await startXLogDaemon(daemonOptions);
-    printJson({
-      ok: true,
-      action: result.started ? "started" : "reused",
-      daemon: result.state,
-      paths: result.paths
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  console.error(`[xlog-mcp] started | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
+
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, async () => {
+      await store.close();
+      process.exit(0);
     });
-    return;
   }
-
-  if (subcommand === "ensure") {
-    const result = await ensureXLogDaemon(daemonOptions);
-    printJson({
-      ok: true,
-      action: result.started ? "started" : "reused",
-      daemon: result.state,
-      paths: result.paths
-    });
-    return;
-  }
-
-  if (subcommand === "stop") {
-    const result = await stopXLogDaemon();
-    printJson({
-      ok: true,
-      action: result.alreadyStopped ? "already-stopped" : "stopped",
-      forced: Boolean(result.forced),
-      daemon: result.state,
-      paths: result.paths
-    });
-    return;
-  }
-
-  if (subcommand === "status") {
-    const result = await getXLogDaemonStatus({
-      ...daemonOptions,
-      cleanupStale: true
-    });
-    printJson({
-      ok: true,
-      running: result.running,
-      healthy: result.healthy,
-      stale: result.stale,
-      daemon: result.state,
-      paths: result.paths
-    });
-    return;
-  }
-
-  console.error(`Unknown daemon command: ${subcommand}`);
-  process.exit(1);
 }
 
 const args = process.argv.slice(2);
 const command = args[0] || "serve";
 const options = readBaseOptions(args);
 
-if (!["serve", "query", "sessions", "bugpack", "daemon"].includes(command)) {
+if (!["serve", "query", "sessions", "bugpack", "mcp"].includes(command)) {
   console.error(`Unknown command: ${command}`);
   process.exit(1);
 }
@@ -277,6 +240,6 @@ if (command === "serve") {
   await runSessions(args, options);
 } else if (command === "bugpack") {
   await runBugpack(args, options);
-} else if (command === "daemon") {
-  await runDaemon(args, options);
+} else if (command === "mcp") {
+  await runMcp(args, options);
 }

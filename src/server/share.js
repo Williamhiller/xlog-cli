@@ -1,26 +1,27 @@
 import { groupRecordsIntoCaptures } from "./captures.js";
+import { toEpochMs } from "../shared/time.js";
+import { isToolingNoise as _isToolingNoise } from "../shared/noise.js";
 
-const TOOLING_NOISE_PATTERNS = [
-  "/@vite/client",
-  "/@react-refresh",
-  "reload-html-",
-  "[wxt]",
-  "vite connected",
-  "vite connecting",
-  "vite ping",
-  "hmr",
-  "hot updated"
-];
+const DEFAULT_LIMITS = {
+  keyLogLimit: 18,
+  maxTextLength: 280,
+  maxArgsLength: 220,
+  maxStackLines: 4,
+  maxStackLineLength: 180
+};
 
-const KEY_LOG_LIMIT = 18;
-const MAX_TEXT_LENGTH = 280;
-const MAX_ARGS_LENGTH = 220;
-const MAX_STACK_LINES = 4;
-const MAX_STACK_LINE_LENGTH = 180;
+const MCP_LIMITS = {
+  keyLogLimit: 30,
+  maxTextLength: 600,
+  maxArgsLength: 500,
+  maxStackLines: 8,
+  maxStackLineLength: 300
+};
 
-function toEpochMs(value) {
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : 0;
+export const PROFILES = { default: DEFAULT_LIMITS, mcp: MCP_LIMITS };
+
+function getLimits(profile) {
+  return PROFILES[profile] || DEFAULT_LIMITS;
 }
 
 function truncateText(value, limit) {
@@ -32,22 +33,7 @@ function truncateText(value, limit) {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-function buildNoiseHaystack(log) {
-  return [
-    log?.text || "",
-    log?.callsite?.file || "",
-    log?.callsite?.url || "",
-    log?.stack?.raw || "",
-    log?.page?.url || ""
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function isToolingNoise(log) {
-  const haystack = buildNoiseHaystack(log);
-  return TOOLING_NOISE_PATTERNS.some((pattern) => haystack.includes(pattern));
-}
+export const isToolingNoise = _isToolingNoise;
 
 function compareLogsAsc(left, right) {
   const timeDelta =
@@ -61,7 +47,7 @@ function compareLogsAsc(left, right) {
   return Number(left.sequence || 0) - Number(right.sequence || 0);
 }
 
-function scoreLog(log) {
+export function scoreLog(log) {
   const level = String(log?.level || "").toLowerCase();
   const kind = String(log?.kind || "").toLowerCase();
   const text = String(log?.text || "").toLowerCase();
@@ -121,11 +107,12 @@ function addContextWindow(selected, centerIndex, radius, basePriority, total) {
   }
 }
 
-function selectKeyLogs(logs) {
+function selectKeyLogs(logs, limits) {
   if (!Array.isArray(logs) || !logs.length) {
     return [];
   }
 
+  const keyLogLimit = limits.keyLogLimit;
   const scored = logs.map((log, index) => ({
     log,
     index,
@@ -147,14 +134,14 @@ function selectKeyLogs(logs) {
     }
   }
 
-  if (selected.size < KEY_LOG_LIMIT) {
+  if (selected.size < keyLogLimit) {
     const remaining = scored
       .filter((item) => !selected.has(item.index) && item.score > 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
 
     for (const item of remaining) {
       addSelectedIndex(selected, item.index, item.score, total);
-      if (selected.size >= KEY_LOG_LIMIT) {
+      if (selected.size >= keyLogLimit) {
         break;
       }
     }
@@ -167,7 +154,7 @@ function selectKeyLogs(logs) {
       score: scored[index]?.score || 0
     }))
     .sort((left, right) => right.priority - left.priority || right.score - left.score || left.index - right.index)
-    .slice(0, KEY_LOG_LIMIT)
+    .slice(0, keyLogLimit)
     .sort((left, right) => left.index - right.index)
     .map((item) => logs[item.index]);
 }
@@ -224,7 +211,7 @@ function summarizeSerializedValue(value, depth = 0) {
   }
 }
 
-function summarizeArgs(args, messageText = "") {
+function summarizeArgs(args, messageText = "", limits) {
   if (!Array.isArray(args) || !args.length) {
     return "";
   }
@@ -241,7 +228,7 @@ function summarizeArgs(args, messageText = "") {
     return "";
   }
 
-  return truncateText(preview, MAX_ARGS_LENGTH);
+  return truncateText(preview, limits.maxArgsLength);
 }
 
 function findSerializedErrorStack(value, seen = new WeakSet()) {
@@ -280,47 +267,48 @@ function findSerializedErrorStack(value, seen = new WeakSet()) {
   return "";
 }
 
-function compactStackLines(input) {
+function compactStackLines(input, limits) {
   const lines = String(input || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .slice(0, MAX_STACK_LINES)
-    .map((line) => truncateText(line, MAX_STACK_LINE_LENGTH));
+    .slice(0, limits.maxStackLines)
+    .map((line) => truncateText(line, limits.maxStackLineLength));
 
   return lines.length ? lines : null;
 }
 
-function buildStackPreview(log) {
+function buildStackPreview(log, limits) {
   const errorStack =
     findSerializedErrorStack(log?.args) || findSerializedErrorStack(log?.extra);
 
   if (errorStack) {
-    return compactStackLines(errorStack);
+    return compactStackLines(errorStack, limits);
   }
 
   if (Array.isArray(log?.stack?.frames) && log.stack.frames.length) {
     return compactStackLines(
       log.stack.frames
-        .slice(0, MAX_STACK_LINES)
+        .slice(0, limits.maxStackLines)
         .map((frame) => {
           const location = [frame.file || frame.url, frame.line, frame.column].filter(Boolean).join(":");
           return frame.functionName ? `at ${frame.functionName} (${location})` : `at ${location}`;
         })
-        .join("\n")
+        .join("\n"),
+      limits
     );
   }
 
   return null;
 }
 
-function compactShareLog(log, includeSessionId = false) {
+export function compactShareLog(log, { includeSessionId = false, limits = DEFAULT_LIMITS } = {}) {
   const output = {
     ts: log.occurredAt,
     lvl: log.level,
     kind: log.kind,
     src: log.source || null,
-    msg: truncateText(log.text, MAX_TEXT_LENGTH)
+    msg: truncateText(log.text, limits.maxTextLength)
   };
 
   if (log.sequence) {
@@ -336,18 +324,26 @@ function compactShareLog(log, includeSessionId = false) {
     output.fn = truncateText(log.callsite.functionName, 80);
   }
 
-  const argsPreview = summarizeArgs(log.args, log.text);
+  const argsPreview = summarizeArgs(log.args, log.text, limits);
   if (argsPreview) {
     output.args = argsPreview;
   }
 
-  const stackPreview = buildStackPreview(log);
+  const stackPreview = buildStackPreview(log, limits);
   if (stackPreview) {
     output.stack = stackPreview;
   }
 
   if (includeSessionId && log?.session?.id) {
     output.session = log.session.id;
+  }
+
+  if (Array.isArray(log?.extra?.networkFailures) && log.extra.networkFailures.length) {
+    output.net = log.extra.networkFailures.slice(0, 3).map((nf) => ({
+      url: nf.url,
+      status: nf.status,
+      method: nf.method
+    }));
   }
 
   if (isToolingNoise(log)) {
@@ -389,11 +385,14 @@ function sanitizeFileName(value) {
     .slice(0, 96) || "capture";
 }
 
-export function buildCaptureSharePayload({ capture = null, logs = [] } = {}) {
+export function buildCaptureSharePayload({ capture = null, logs = [], profile = "default" } = {}) {
+  const limits = getLimits(profile);
   const sortedLogs = [...logs].filter(Boolean).sort(compareLogsAsc);
   const captureSummary = capture || groupRecordsIntoCaptures(sortedLogs)[0] || null;
   const includeSessionId = Number(captureSummary?.sessionCount || 0) > 1;
-  const keyLogs = selectKeyLogs(sortedLogs).map((log) => compactShareLog(log, includeSessionId));
+  const keyLogs = selectKeyLogs(sortedLogs, limits).map((log) =>
+    compactShareLog(log, { includeSessionId, limits })
+  );
 
   return {
     v: 1,

@@ -3,12 +3,12 @@
 ## Baseline Health
 
 ```bash
-npx xlog-cli daemon status
+npx xlog-cli serve --silent
 npx xlog-cli query --limit 20
 npx xlog-cli sessions
 ```
 
-Use this set to confirm daemon health and whether any logs/sessions are available.
+Use this set to confirm server startup and whether any logs/sessions are available.
 
 ## Bugpack-First Debug Loop
 
@@ -20,15 +20,14 @@ npx xlog-cli bugpack --session <sessionId>
 
 Use `bugpack` output to reason about `capture`, `logs`, `session`, and `summary` before broad code edits.
 
-## Daemon Lifecycle Checks
+## Server Lifecycle Checks
 
 ```bash
-npx xlog-cli daemon start
-npx xlog-cli daemon status
-npx xlog-cli daemon stop
+npx xlog-cli serve --silent
+curl -sS http://127.0.0.1:2718/api/health
 ```
 
-Run this sequence when diagnosing orphan daemon state, stale PID files, or startup regressions.
+Run this sequence when diagnosing server startup or API regressions.
 
 ## Viewer Development
 
@@ -42,8 +41,7 @@ Use `dev:viewer` for served integration behavior and `dev:viewer:ui` for direct 
 
 ## API Smoke Checks
 
-- `GET /api/health`: daemon/server liveness.
-- `GET /api/runtime/status`: active runtime registrations.
+- `GET /api/health`: server liveness.
 - `GET /api/captures`: capture listing sanity.
 - `GET /api/x-log`: filtered logs.
 - `POST /api/x-log`: ingestion path.
@@ -53,7 +51,7 @@ Use API checks when behavior diverges between CLI output and viewer output.
 
 ## Validation Guidance
 
-- Touching runtime/server ingestion: verify `daemon status` + `query` + `bugpack`.
+- Touching runtime/server ingestion: verify server health + `query` + `bugpack`.
 - Touching query/storage/indexing: verify `query` with filters and `sessions`.
 - Touching capture grouping: verify at least one `bugpack --capture`.
-- Touching viewer code: run `npm run build:viewer` and load `/viewer/` from a running daemon.
+- Touching viewer code: run `npm run build:viewer` and load `/viewer/` from a running server.

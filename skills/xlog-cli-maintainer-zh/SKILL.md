@@ -1,6 +1,6 @@
 ---
 name: xlog-cli-maintainer-zh
-description: 用于维护和扩展 xlog-cli 仓库（CLI、daemon/server API、runtime 拦截、storage/index、viewer UI）。当任务涉及 bugpack 驱动排障、capture/session 分组、日志查询与存储变更、插件注入链路，或需要修改 bin/、src/、viewer/、viewer-react/ 时使用此中文 skill。
+description: 用于维护和扩展 xlog-cli 仓库（CLI、server API、runtime 拦截、storage/index、viewer UI）。当任务涉及 bugpack 驱动排障、capture/session 分组、日志查询与存储变更、插件注入链路，或需要修改 bin/、src/、viewer/、viewer-react/ 时使用此中文 skill。
 ---
 
 # xlog-cli 维护助手（中文）
@@ -12,7 +12,7 @@ description: 用于维护和扩展 xlog-cli 仓库（CLI、daemon/server API、r
 ## 执行流程
 
 1. 先复现并缩小范围。  
-先跑 [references/command-playbook.md](references/command-playbook.md) 的最小命令集，确认问题落在 daemon 健康、日志入库、capture 分组、query 过滤还是 viewer 渲染。
+先跑 [references/command-playbook.md](references/command-playbook.md) 的最小命令集，确认问题落在 server 健康、日志入库、capture 分组、query 过滤还是 viewer 渲染。
 
 2. 改动前先定位模块归属。  
 通过 [references/module-map.md](references/module-map.md) 选择最小可修改边界，避免跨层误改。
@@ -37,7 +37,7 @@ description: 用于维护和扩展 xlog-cli 仓库（CLI、daemon/server API、r
 
 ### 调整 CLI 行为
 
-优先修改 `bin/xlog.js`，只联动其直接调用的 server/runtime 模块。完成后至少验证 `daemon status`、`query`、`bugpack`。
+优先修改 `bin/xlog-cli.js`，只联动其直接调用的 server/runtime 模块。完成后至少验证 server health、`query`、`bugpack`。
 
 ### 调整日志采集或过滤
 

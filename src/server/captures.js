@@ -1,19 +1,7 @@
+import { toEpochMs } from "../shared/time.js";
+import { slugify } from "../shared/slug.js";
+
 const DEFAULT_CAPTURE_GAP_MS = 90 * 1000;
-
-function toEpochMs(value) {
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function slugify(value) {
-  const output = String(value || "project")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-
-  return output || "project";
-}
 
 function sortRecordsAsc(left, right) {
   const timeDelta =

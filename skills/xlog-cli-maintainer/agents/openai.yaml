@@ -1,4 +1,4 @@
 interface:
   display_name: "xlog-cli Maintainer"
   short_description: "Maintain xlog-cli logging and viewer workflows"
-  default_prompt: "Use this skill to maintain xlog-cli runtime, daemon, storage, and viewer code with bugpack-first workflows."
+  default_prompt: "Use this skill to maintain xlog-cli runtime, server, storage, and viewer code with bugpack-first workflows."

@@ -1,6 +1,6 @@
 ---
 name: xlog-cli-maintainer
-description: Maintain and extend the xlog-cli repository across CLI commands, daemon/server APIs, runtime interception, storage/indexing, and viewer UI assets. Use when tasks in this project involve bugpack-driven debugging, capture/session grouping behavior, log query/storage changes, plugin/runtime integration, or edits in bin/, src/, viewer/, and viewer-react/.
+description: Maintain and extend the xlog-cli repository across CLI commands, server APIs, runtime interception, storage/indexing, and viewer UI assets. Use when tasks in this project involve bugpack-driven debugging, capture/session grouping behavior, log query/storage changes, plugin/runtime integration, or edits in bin/, src/, viewer/, and viewer-react/.
 ---
 
 # xlog-cli Maintainer
@@ -12,7 +12,7 @@ Keep xlog-cli changes aligned with the repository's local-first logging flow: ca
 ## Use This Workflow
 
 1. Reproduce and bound scope first.
-Run the minimum command set from [references/command-playbook.md](references/command-playbook.md) to confirm whether the issue is in daemon health, log ingestion, capture grouping, query filtering, or viewer rendering.
+Run the minimum command set from [references/command-playbook.md](references/command-playbook.md) to confirm whether the issue is in server health, log ingestion, capture grouping, query filtering, or viewer rendering.
 
 2. Locate ownership before editing.
 Use [references/module-map.md](references/module-map.md) to pick the smallest module boundary that can hold the change.
@@ -37,7 +37,7 @@ Describe impact in terms of `capture`, `logs`, `session`, `summary`, and viewer 
 
 ### Adjust CLI behavior
 
-Edit `bin/xlog-cli.js` and only the targeted server/runtime helpers it dispatches to. Verify with `daemon status`, `query`, and `bugpack`.
+Edit `bin/xlog-cli.js` and only the targeted server/runtime helpers it dispatches to. Verify with server health, `query`, and `bugpack`.
 
 ### Change log ingestion or filtering
 

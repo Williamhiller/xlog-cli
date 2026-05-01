@@ -1,5 +1,5 @@
-import { Button } from "antd";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "../icons.jsx";
 
 const DRAWER_ANIMATION_MS = 220;
 
@@ -100,8 +100,7 @@ export default function DetailDrawer({
   onCopy,
   buildContextLines,
   getRuntimeSourceLabel,
-  getCallsiteSourceLabel,
-  isToolingNoise
+  getCallsiteSourceLabel
 }) {
   const drawerRef = useRef(null);
   const [isRendered, setIsRendered] = useState(() => Boolean(visible && log));
@@ -173,7 +172,6 @@ export default function DetailDrawer({
   const contextText = buildContextLines(activeLog).join("\n");
   const argsText = JSON.stringify(activeLog.args || [], null, 2);
   const stackInfo = getPreferredStackInfo(activeLog);
-  const noisy = isToolingNoise(activeLog);
 
   return (
     <div className={`viewer-detail-layer ${isClosing ? "is-exit" : "is-enter"}`}>
@@ -192,10 +190,10 @@ export default function DetailDrawer({
             <div className="viewer-detail-title">{activeLog.text || "No log selected"}</div>
           </div>
 
-          <Button size="small" className="viewer-ghost-button viewer-close-button" onClick={onClose}>
-            <i className="ri-close-line" />
+          <button type="button" className="viewer-ghost-button viewer-close-button" onClick={onClose}>
+            <Icon name="ri-close-line" />
             Close
-          </Button>
+          </button>
         </div>
 
         <div className="viewer-detail-scroll">
@@ -206,16 +204,15 @@ export default function DetailDrawer({
               <span className="viewer-log-chip">{getRuntimeSourceLabel(activeLog)}</span>
               <span className="viewer-log-chip">{getCallsiteSourceLabel(activeLog)}</span>
               <span className="viewer-log-chip">{activeLog.session?.id || "unknown session"}</span>
-              {noisy ? <span className="viewer-log-chip viewer-log-chip--noise">tooling noise</span> : null}
             </div>
 
             <div className="viewer-detail-grid">
               <section className="viewer-card">
                 <div className="viewer-card-head">
                   <span>Summary</span>
-                  <Button size="small" className="viewer-ghost-button" onClick={() => onCopy(activeLog.text || "")}>
+                  <button type="button" className="viewer-ghost-button" onClick={() => onCopy(activeLog.text || "")}>
                     Copy
-                  </Button>
+                  </button>
                 </div>
                 <pre>{activeLog.text || "No log selected"}</pre>
               </section>
@@ -223,9 +220,9 @@ export default function DetailDrawer({
               <section className="viewer-card">
                 <div className="viewer-card-head">
                   <span>Callsite + Session</span>
-                  <Button size="small" className="viewer-ghost-button" onClick={() => onCopy(contextText)}>
+                  <button type="button" className="viewer-ghost-button" onClick={() => onCopy(contextText)}>
                     Copy
-                  </Button>
+                  </button>
                 </div>
                 <pre>{contextText}</pre>
               </section>
@@ -233,9 +230,9 @@ export default function DetailDrawer({
               <section className="viewer-card">
                 <div className="viewer-card-head">
                   <span>Args</span>
-                  <Button size="small" className="viewer-ghost-button" onClick={() => onCopy(argsText)}>
+                  <button type="button" className="viewer-ghost-button" onClick={() => onCopy(argsText)}>
                     Copy
-                  </Button>
+                  </button>
                 </div>
                 <pre>{argsText}</pre>
               </section>
@@ -243,9 +240,9 @@ export default function DetailDrawer({
               <section className="viewer-card">
                 <div className="viewer-card-head">
                   <span>{stackInfo.title}</span>
-                  <Button size="small" className="viewer-ghost-button" onClick={() => onCopy(stackInfo.text)}>
+                  <button type="button" className="viewer-ghost-button" onClick={() => onCopy(stackInfo.text)}>
                     Copy
-                  </Button>
+                  </button>
                 </div>
                 <pre>{stackInfo.text}</pre>
               </section>

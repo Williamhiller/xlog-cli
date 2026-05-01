@@ -3,6 +3,8 @@ import path from "node:path";
 import { groupRecordsIntoCaptures } from "./captures.js";
 
 let sqliteModulePromise = null;
+const DEFAULT_QUERY_LIMIT = 200;
+const MAX_QUERY_LIMIT = 10000;
 
 function toEpochMs(value) {
   const ms = new Date(value).getTime();
@@ -29,25 +31,13 @@ function escapeLike(value) {
   return String(value).replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
-function buildFtsQuery(input) {
-  const terms = String(input || "")
-    .trim()
-    .match(/[\p{L}\p{N}_./:-]+/gu);
-
-  if (!terms || !terms.length) {
-    return null;
+function normalizeLimit(value, fallback = DEFAULT_QUERY_LIMIT, max = MAX_QUERY_LIMIT) {
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return fallback;
   }
 
-  return terms
-    .map((term) => {
-      const escaped = term.replaceAll('"', '""');
-      if (/^[\p{L}\p{N}_]+$/u.test(term)) {
-        return `${escaped}*`;
-      }
-
-      return `"${escaped}"`;
-    })
-    .join(" AND ");
+  return Math.min(Math.floor(limit), max);
 }
 
 function compactLevels(row) {
@@ -74,7 +64,7 @@ async function loadSqliteModule() {
 function buildLogQueryParts(filters) {
   const clauses = [];
   const params = {
-    limit: Number(filters.limit || 200)
+    limit: normalizeLimit(filters.limit)
   };
   let joinSql = "";
 
@@ -103,9 +93,14 @@ function buildLogQueryParts(filters) {
     clauses.push(`logs.session_id IN (${placeholders.join(", ")})`);
   }
 
-  if (filters.kind) {
-    clauses.push("logs.kind = :kind");
-    params.kind = filters.kind;
+  if (filters.kinds && filters.kinds.length) {
+    const placeholders = filters.kinds.map((kind, index) => {
+      const key = `kind${index}`;
+      params[key] = kind;
+      return `:${key}`;
+    });
+
+    clauses.push(`logs.kind IN (${placeholders.join(", ")})`);
   }
 
   if (filters.levels && filters.levels.length) {
@@ -134,15 +129,8 @@ function buildLogQueryParts(filters) {
   }
 
   if (filters.q) {
-    const ftsQuery = buildFtsQuery(filters.q);
-    if (ftsQuery) {
-      joinSql = " JOIN logs_fts ON logs_fts.log_id = logs.id ";
-      clauses.push("logs_fts MATCH :ftsQuery");
-      params.ftsQuery = ftsQuery;
-    } else {
-      clauses.push("logs.search_text LIKE :textQuery ESCAPE '\\'");
-      params.textQuery = `%${escapeLike(filters.q.toLowerCase())}%`;
-    }
+    clauses.push("logs.search_text LIKE :textQuery ESCAPE '\\'");
+    params.textQuery = `%${escapeLike(filters.q.toLowerCase())}%`;
   }
 
   return {
@@ -424,6 +412,7 @@ export class SQLiteLogIndex {
     `);
     this.deleteLogStmt = this.db.prepare("DELETE FROM logs WHERE id = :logId");
     this.deleteSessionStmt = this.db.prepare("DELETE FROM sessions WHERE id = :sessionId");
+    this.getLogByIdStmt = this.db.prepare("SELECT raw_json FROM logs WHERE id = :logId");
     this.selectSessionLogsStmt = this.db.prepare(`
       SELECT raw_json
       FROM logs
@@ -655,10 +644,16 @@ export class SQLiteLogIndex {
       .all(params);
 
     const records = parseRecordRows(rows);
-    return groupRecordsIntoCaptures(records, {
+    const captures = groupRecordsIntoCaptures(records, {
       project: filters.project || "",
       gapMs: filters.gapMs || undefined
     });
+
+    if (filters.captureId) {
+      return captures.filter((capture) => capture.id === filters.captureId);
+    }
+
+    return captures;
   }
 
   listSessions(filters = {}) {
@@ -717,6 +712,32 @@ export class SQLiteLogIndex {
 
   close() {
     this.db.close();
+  }
+
+  getLogById(logId) {
+    const rows = this.getLogByIdStmt.all({ logId });
+    const records = parseRecordRows(rows);
+    return records[0] || null;
+  }
+
+  deleteRecordsByIds(ids) {
+    if (!ids.length) {
+      return;
+    }
+
+    this.db.exec("BEGIN");
+
+    try {
+      for (const id of ids) {
+        this.deleteFtsStmt.run({ logId: id });
+        this.deleteLogStmt.run({ logId: id });
+      }
+
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }
 

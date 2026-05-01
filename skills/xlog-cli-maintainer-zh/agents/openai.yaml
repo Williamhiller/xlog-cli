@@ -1,4 +1,4 @@
 interface:
   display_name: "xlog-cli 维护助手（中文）"
   short_description: "面向 xlog-cli 仓库的中文维护与排障技能工作流"
-  default_prompt: "使用这个中文 skill 维护 xlog-cli 的 runtime、daemon、storage、viewer，并遵循 bugpack-first 排障流程。"
+  default_prompt: "使用这个中文 skill 维护 xlog-cli 的 runtime、server、storage、viewer，并遵循 bugpack-first 排障流程。"

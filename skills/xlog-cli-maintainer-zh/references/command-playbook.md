@@ -3,12 +3,12 @@
 ## 基础健康检查
 
 ```bash
-npx xlog-cli daemon status
+npx xlog-cli serve --silent
 npx xlog-cli query --limit 20
 npx xlog-cli sessions
 ```
 
-先确认 daemon 是否健康，以及当前是否已有日志和会话数据。
+先确认 server 是否能启动，以及当前是否已有日志和会话数据。
 
 ## Bugpack 优先排障
 
@@ -20,15 +20,14 @@ npx xlog-cli bugpack --session <sessionId>
 
 改代码前，先用 bugpack 观察 `capture`、`logs`、`session`、`summary`。
 
-## Daemon 生命周期
+## Server 生命周期
 
 ```bash
-npx xlog-cli daemon start
-npx xlog-cli daemon status
-npx xlog-cli daemon stop
+npx xlog-cli serve --silent
+curl -sS http://127.0.0.1:2718/api/health
 ```
 
-用于排查 daemon 启停失败、僵尸状态、状态文件残留等问题。
+用于排查 server 启动失败或 API 可用性问题。
 
 ## Viewer 开发与构建
 
@@ -43,7 +42,6 @@ npm run build:viewer
 ## API 快速核对
 
 - `GET /api/health`: 服务可用性。
-- `GET /api/runtime/status`: runtime 注册状态。
 - `GET /api/captures`: capture 列表。
 - `GET /api/x-log`: 日志查询结果。
 - `POST /api/x-log`: 日志上报入口。
@@ -53,7 +51,7 @@ npm run build:viewer
 
 ## 变更后的最小验证
 
-- 改 runtime/server 入库：至少验证 `daemon status` + `query` + `bugpack`。
+- 改 runtime/server 入库：至少验证 server health + `query` + `bugpack`。
 - 改 query/storage/index：至少验证带过滤的 `query` 和 `sessions`。
 - 改 capture 分组：至少验证一次 `bugpack --capture`。
 - 改 viewer：执行 `npm run build:viewer` 并在 `/viewer/` 打开确认。

@@ -6,11 +6,17 @@ import {
 } from "../shared/constants.js";
 import { serializeArgs, serializeValue, argsToText } from "../shared/serialize.js";
 import { captureStack, resolveCallsite } from "../shared/stack.js";
+import { isToolingNoise } from "../shared/noise.js";
 
 const GLOBAL_KEY = "__xlog_state__";
 const KEEPALIVE_BODY_LIMIT = 60 * 1024;
 const AUTO_INSTALL_GUARD_KEY = "__xlog_auto_installing__";
 const DEFAULT_CAPTURE_TTL_MS = 5 * 60 * 1000;
+const NETWORK_FAILURE_RING_SIZE = 20;
+const NETWORK_FAILURE_WINDOW_MS = 5000;
+const MAX_RETRY_COUNT = 5;
+const RETRY_COOLDOWN_MS = 30000;
+const MAX_QUEUE_SIZE = 1000;
 
 function createId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -499,6 +505,125 @@ export function xlogConsole(level, meta, ...args) {
   return fallback.apply(console, args);
 }
 
+function createNetworkRingBuffer() {
+  const buffer = [];
+  return {
+    push(entry) {
+      buffer.push(entry);
+      if (buffer.length > NETWORK_FAILURE_RING_SIZE) {
+        buffer.shift();
+      }
+    },
+    getRecentFailures() {
+      const cutoff = Date.now() - NETWORK_FAILURE_WINDOW_MS;
+      return buffer.filter((e) => e.occurredAtMs >= cutoff && e.failed);
+    },
+    getAll() {
+      return buffer.slice();
+    }
+  };
+}
+
+function interceptFetch(state) {
+  if (typeof globalThis.fetch !== "function") return;
+
+  const originalFetch = globalThis.fetch.bind(globalThis);
+  state.originalFetch = originalFetch;
+
+  globalThis.fetch = async (...args) => {
+    const url = typeof args[0] === "string" ? args[0] : args[0]?.url || String(args[0]);
+    const method = args[1]?.method || "GET";
+    const startMs = Date.now();
+
+    try {
+      const response = await originalFetch(...args);
+      const durationMs = Date.now() - startMs;
+
+      if (!response.ok) {
+        state.networkFailures.push({
+          url: url.slice(0, 200),
+          method,
+          status: response.status,
+          statusText: response.statusText,
+          durationMs,
+          failed: true,
+          occurredAtMs: Date.now()
+        });
+      }
+
+      return response;
+    } catch (err) {
+      state.networkFailures.push({
+        url: url.slice(0, 200),
+        method,
+        status: 0,
+        statusText: err.message || "Network Error",
+        durationMs: Date.now() - startMs,
+        failed: true,
+        occurredAtMs: Date.now()
+      });
+      throw err;
+    }
+  };
+}
+
+function interceptXHR(state) {
+  if (typeof XMLHttpRequest === "undefined") return;
+
+  const OriginalXHR = XMLHttpRequest;
+  state.OriginalXHR = OriginalXHR;
+
+  function PatchedXHR() {
+    const xhr = new OriginalXHR();
+    const originalOpen = xhr.open.bind(xhr);
+    const originalSend = xhr.send.bind(xhr);
+
+    let method = "";
+    let url = "";
+    let startMs = 0;
+
+    xhr.open = (m, u, ...rest) => {
+      method = m;
+      url = typeof u === "string" ? u : String(u);
+      return originalOpen(m, u, ...rest);
+    };
+
+    xhr.send = (...args) => {
+      startMs = Date.now();
+
+      xhr.addEventListener("loadend", () => {
+        const durationMs = Date.now() - startMs;
+        const failed = xhr.status === 0 || xhr.status >= 400;
+
+        if (failed) {
+          state.networkFailures.push({
+            url: url.slice(0, 200),
+            method,
+            status: xhr.status,
+            statusText: xhr.statusText,
+            durationMs,
+            failed: true,
+            occurredAtMs: Date.now()
+          });
+        }
+      });
+
+      return originalSend(...args);
+    };
+
+    return xhr;
+  }
+
+  PatchedXHR.prototype = OriginalXHR.prototype;
+  PatchedXHR.UNSENT = 0;
+  PatchedXHR.OPENED = 1;
+  PatchedXHR.HEADERS_RECEIVED = 2;
+  PatchedXHR.LOADING = 3;
+  PatchedXHR.DONE = 4;
+
+  globalThis.XMLHttpRequest = PatchedXHR;
+}
+
 export function installXLog(options = {}) {
   if (!hasRuntimeScope() || typeof console === "undefined") {
     return {
@@ -537,6 +662,7 @@ export function installXLog(options = {}) {
     ),
     flushInterval: Number(options.flushInterval || 500),
     maxBatchSize: Number(options.maxBatchSize || 20),
+    maxQueueSize: Number(options.maxQueueSize || MAX_QUEUE_SIZE),
     originalConsole: {},
     queue: [],
     sequence: 0,
@@ -544,10 +670,51 @@ export function installXLog(options = {}) {
     flushTimer: null,
     listeners: [],
     loggingDisabled: false,
-    loggingDisabledAt: null
+    loggingDisabledAt: null,
+    retryCount: 0,
+    retryTimer: null,
+    networkFailures: createNetworkRingBuffer()
   };
 
   state.captureReady = resolveSharedCapture(state);
+
+  // Intercept network requests to correlate with errors
+  interceptFetch(state);
+  interceptXHR(state);
+
+  function trimQueue(currentState) {
+    if (currentState.queue.length > currentState.maxQueueSize) {
+      currentState.queue.splice(0, currentState.queue.length - currentState.maxQueueSize);
+    }
+  }
+
+  function handleFlushFailure(currentState, failedLogs = []) {
+    currentState.retryCount += 1;
+
+    if (failedLogs.length) {
+      currentState.queue.unshift(...failedLogs);
+      trimQueue(currentState);
+    }
+
+    if (currentState.retryCount < MAX_RETRY_COUNT) {
+      // Will retry on next flush cycle
+      return;
+    }
+
+    // Disable temporarily, then re-enable after cooldown
+    currentState.loggingDisabled = true;
+    currentState.loggingDisabledAt = new Date().toISOString();
+    trimQueue(currentState);
+
+    if (!currentState.retryTimer && typeof globalThis.setTimeout === "function") {
+      currentState.retryTimer = globalThis.setTimeout(() => {
+        currentState.retryTimer = null;
+        currentState.loggingDisabled = false;
+        currentState.loggingDisabledAt = null;
+        currentState.retryCount = 0;
+      }, RETRY_COOLDOWN_MS);
+    }
+  }
 
   function scheduleFlush() {
     if (state.loggingDisabled) {
@@ -594,9 +761,7 @@ export function installXLog(options = {}) {
         const sent = navigator.sendBeacon(endpoint, blob);
 
         if (!sent) {
-          state.loggingDisabled = true;
-          state.loggingDisabledAt = new Date().toISOString();
-          state.queue.length = 0;
+          handleFlushFailure(state, logs);
         }
       } else {
         const canUseKeepalive =
@@ -614,15 +779,14 @@ export function installXLog(options = {}) {
         });
 
         if (!response.ok) {
-          state.loggingDisabled = true;
-          state.loggingDisabledAt = new Date().toISOString();
-          state.queue.length = 0;
+          handleFlushFailure(state, logs);
+        } else {
+          // Success — reset retry count
+          state.retryCount = 0;
         }
       }
     } catch {
-      state.loggingDisabled = true;
-      state.loggingDisabledAt = new Date().toISOString();
-      state.queue.length = 0;
+      handleFlushFailure(state, logs);
     } finally {
       state.flushing = false;
 
@@ -638,6 +802,7 @@ export function installXLog(options = {}) {
     }
 
     state.queue.push(record);
+    trimQueue(state);
 
     if (state.source === "background" || state.source === "worker") {
       void flush();
@@ -671,6 +836,15 @@ export function installXLog(options = {}) {
     const persistedStack = shouldPersistCapturedStack(args, stack) ? stack : null;
     const timestamp = nowTimestamp();
 
+    // Attach recent network failures to error-level records
+    const enrichedExtra = extra;
+    if ((level === "error" || kind === "window.error" || kind === "unhandledrejection") && state.networkFailures) {
+      const recentFailures = state.networkFailures.getRecentFailures();
+      if (recentFailures.length > 0) {
+        enrichedExtra.networkFailures = recentFailures;
+      }
+    }
+
     const record = {
       kind,
       level: level || "log",
@@ -686,8 +860,12 @@ export function installXLog(options = {}) {
       callsite,
       stack: persistedStack,
       tags: ["browser", state.source && `source:${state.source}`, kind, method].filter(Boolean),
-      extra
+      extra: enrichedExtra
     };
+
+    if (isToolingNoise(record)) {
+      return record;
+    }
 
     enqueue(record);
     return record;
@@ -797,9 +975,23 @@ export function installXLog(options = {}) {
         console[method] = state.originalConsole[method];
       }
 
+      // Restore network interceptors
+      if (state.originalFetch) {
+        globalThis.fetch = state.originalFetch;
+      }
+      if (state.OriginalXHR) {
+        globalThis.XMLHttpRequest = state.OriginalXHR;
+      }
+
       if (state.flushTimer) {
         if (typeof globalThis.clearTimeout === "function") {
           globalThis.clearTimeout(state.flushTimer);
+        }
+      }
+
+      if (state.retryTimer) {
+        if (typeof globalThis.clearTimeout === "function") {
+          globalThis.clearTimeout(state.retryTimer);
         }
       }
 
@@ -815,7 +1007,9 @@ export function installXLog(options = {}) {
         serverUrl: state.serverUrl,
         queued: state.queue.length,
         loggingDisabled: state.loggingDisabled,
-        loggingDisabledAt: state.loggingDisabledAt
+        loggingDisabledAt: state.loggingDisabledAt,
+        retryCount: state.retryCount,
+        recentNetworkFailures: state.networkFailures ? state.networkFailures.getRecentFailures().length : 0
       };
     }
   };

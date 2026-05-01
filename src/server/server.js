@@ -6,15 +6,12 @@ import { buildCaptureShareFileName, buildCaptureSharePayload } from "./share.js"
 import {
   buildViewerHtml,
   getBuiltViewerAsset,
-  getVendorAsset,
   getViewerTextAsset,
   hasBuiltReactViewer
 } from "./viewer.js";
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
 
 const SERVER_KEY = "__xlog_server_singleton__";
-const REGISTRATION_TTL_MS = 30 * 1000;
-const IDLE_SHUTDOWN_DELAY_MS = 15 * 1000;
 
 function getState() {
   return globalThis[SERVER_KEY] || null;
@@ -109,6 +106,16 @@ function createSseMessage(payload) {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
+function broadcastSse(clients, message) {
+  for (const client of clients) {
+    try {
+      client.write(message);
+    } catch {
+      clients.delete(client);
+    }
+  }
+}
+
 function projectNameFromRoot(projectRoot) {
   return path.basename(projectRoot || process.cwd()) || "unknown-project";
 }
@@ -141,41 +148,6 @@ async function resolvePort(preferredPort, host, allowFallback = true) {
   return preferredPort;
 }
 
-function toRegistrationKey(payload = {}) {
-  return `${String(payload.projectRoot || "").trim()}::${String(payload.pid || "")}`;
-}
-
-function toRegistrationRecord(payload = {}) {
-  const now = new Date().toISOString();
-  return {
-    key: toRegistrationKey(payload),
-    pid: Number(payload.pid || 0) || 0,
-    projectRoot: String(payload.projectRoot || "").trim(),
-    projectName: String(payload.projectName || "unknown-project").trim() || "unknown-project",
-    tool: String(payload.tool || "unknown").trim() || "unknown",
-    dataDir: payload.dataDir || null,
-    registeredAt: payload.registeredAt || now,
-    lastHeartbeatAt: now
-  };
-}
-
-function pruneRegistrations(registrations) {
-  const now = Date.now();
-
-  for (const [key, registration] of registrations.entries()) {
-    const lastHeartbeatMs = new Date(registration.lastHeartbeatAt || registration.registeredAt || 0).getTime();
-    if (!Number.isFinite(lastHeartbeatMs) || now - lastHeartbeatMs > REGISTRATION_TTL_MS) {
-      registrations.delete(key);
-    }
-  }
-}
-
-function serializeRegistrations(registrations) {
-  return [...registrations.values()].sort((left, right) => {
-    return String(left.projectName).localeCompare(String(right.projectName)) || Number(left.pid) - Number(right.pid);
-  });
-}
-
 export async function createXLogServer(options = {}) {
   const existing = getState();
   if (existing && existing.ready) {
@@ -189,37 +161,6 @@ export async function createXLogServer(options = {}) {
   const projectName = options.projectName || projectNameFromRoot(projectRoot);
   const store = new FileLogStore({ projectRoot, dataDir });
   const sseClients = new Set();
-  const registrations = new Map();
-  let idleShutdownTimer = null;
-  let state = null;
-
-  const scheduleIdleShutdown = () => {
-    if (!options.sharedDaemon) {
-      return;
-    }
-
-    pruneRegistrations(registrations);
-    if (registrations.size > 0 || idleShutdownTimer || !state) {
-      return;
-    }
-
-    idleShutdownTimer = setTimeout(() => {
-      idleShutdownTimer = null;
-      pruneRegistrations(registrations);
-      if (!registrations.size) {
-        void state.close();
-      }
-    }, IDLE_SHUTDOWN_DELAY_MS);
-  };
-
-  const cancelIdleShutdown = () => {
-    if (!idleShutdownTimer) {
-      return;
-    }
-
-    clearTimeout(idleShutdownTimer);
-    idleShutdownTimer = null;
-  };
 
   const ready = (async () => {
     const port = await resolvePort(preferredPort, host, options.allowFallbackPort !== false);
@@ -274,98 +215,13 @@ export async function createXLogServer(options = {}) {
         }
       }
 
-      if (req.method === "GET" && url.pathname.startsWith("/vendor/")) {
-        const vendorPath = url.pathname.slice("/vendor/".length);
-        const slashIndex = vendorPath.indexOf("/");
-        const vendor = slashIndex === -1 ? vendorPath : vendorPath.slice(0, slashIndex);
-        const assetPath = slashIndex === -1 ? "" : vendorPath.slice(slashIndex + 1);
-        const body = await getVendorAsset(vendor, assetPath);
-
-        if (!body) {
-          writeJson(res, 404, {
-            ok: false,
-            error: "Vendor asset not found"
-          });
-          return;
-        }
-
-        writeBuffer(res, 200, getContentType(assetPath), body);
-        return;
-      }
-
       if (req.method === "GET" && url.pathname === "/api/health") {
-        pruneRegistrations(registrations);
         const storage = await store.describeStorage();
         writeJson(res, 200, {
           ok: true,
           projectName,
           dataDir: path.resolve(projectRoot, dataDir),
-          storage,
-          sharedDaemon: Boolean(options.sharedDaemon),
-          registrations: serializeRegistrations(registrations)
-        });
-        return;
-      }
-
-      if (req.method === "GET" && url.pathname === "/api/runtime/status") {
-        pruneRegistrations(registrations);
-        writeJson(res, 200, {
-          ok: true,
-          registrations: serializeRegistrations(registrations)
-        });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/runtime/register") {
-        const payload = toRegistrationRecord(await parseJsonBody(req));
-        if (!payload.projectRoot || !payload.pid) {
-          writeJson(res, 400, {
-            ok: false,
-            error: "Invalid registration"
-          });
-          return;
-        }
-
-        registrations.set(payload.key, payload);
-        cancelIdleShutdown();
-        writeJson(res, 200, {
-          ok: true,
-          registration: payload,
-          registrations: serializeRegistrations(registrations)
-        });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/runtime/heartbeat") {
-        const payload = toRegistrationRecord(await parseJsonBody(req));
-        if (!payload.projectRoot || !payload.pid) {
-          writeJson(res, 400, {
-            ok: false,
-            error: "Invalid heartbeat"
-          });
-          return;
-        }
-
-        const current = registrations.get(payload.key);
-        registrations.set(payload.key, {
-          ...payload,
-          registeredAt: current?.registeredAt || payload.registeredAt,
-          lastHeartbeatAt: new Date().toISOString()
-        });
-        cancelIdleShutdown();
-        writeJson(res, 200, {
-          ok: true
-        });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/runtime/unregister") {
-        const payload = toRegistrationRecord(await parseJsonBody(req));
-        registrations.delete(payload.key);
-        scheduleIdleShutdown();
-        writeJson(res, 200, {
-          ok: true,
-          registrations: serializeRegistrations(registrations)
+          storage
         });
         return;
       }
@@ -514,9 +370,7 @@ export async function createXLogServer(options = {}) {
               records: result.records
             });
 
-            for (const client of sseClients) {
-              client.write(message);
-            }
+            broadcastSse(sseClients, message);
           }
 
           writeJson(res, 201, {
@@ -546,9 +400,7 @@ export async function createXLogServer(options = {}) {
             at: new Date().toISOString()
           });
 
-          for (const client of sseClients) {
-            client.write(message);
-          }
+          broadcastSse(sseClients, message);
 
           writeJson(res, 200, {
             ok: true,
@@ -575,7 +427,7 @@ export async function createXLogServer(options = {}) {
       server.listen(port, host, resolve);
     });
 
-    state = {
+    const state = {
       host,
       port,
       server,
@@ -585,8 +437,6 @@ export async function createXLogServer(options = {}) {
       serverUrl: `http://${host}:${port}`,
       viewerUrl: `http://${host}:${port}/`,
       close: async () => {
-        cancelIdleShutdown();
-        registrations.clear();
         await store.close();
         await new Promise((resolve, reject) => {
           server.close((error) => {

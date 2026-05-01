@@ -3,18 +3,13 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DEFAULT_DATA_DIR, SCHEMA_VERSION } from "../shared/constants.js";
 import { compactFilePath } from "../shared/stack.js";
+import { toEpochMs } from "../shared/time.js";
+import { slugify } from "../shared/slug.js";
 import { createSQLiteLogIndex } from "./sqlite-index.js";
 import { groupRecordsIntoCaptures } from "./captures.js";
 
-function slugify(value) {
-  const output = String(value || "unknown-project")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-
-  return output || "project";
-}
+const DEFAULT_QUERY_LIMIT = 200;
+const MAX_QUERY_LIMIT = 10000;
 
 function toArray(input) {
   if (!input) {
@@ -22,6 +17,29 @@ function toArray(input) {
   }
 
   return Array.isArray(input) ? input : [input];
+}
+
+function normalizeLimit(value, fallback = DEFAULT_QUERY_LIMIT, max = MAX_QUERY_LIMIT) {
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return fallback;
+  }
+
+  return Math.min(Math.floor(limit), max);
+}
+
+function normalizeTimeMs(value) {
+  if (!value) {
+    return null;
+  }
+
+  const ms = typeof value === "number" ? value : new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function normalizeTimeIso(value) {
+  const ms = normalizeTimeMs(value);
+  return ms === null ? "" : new Date(ms).toISOString();
 }
 
 async function walkFiles(dir) {
@@ -70,11 +88,6 @@ async function readJsonLines(filePath) {
   return records;
 }
 
-function toEpochMs(value) {
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : 0;
-}
-
 function normalizeFilters(filters = {}) {
   const sessionIds = String(filters.sessionIds || "")
     .split(",")
@@ -86,25 +99,28 @@ function normalizeFilters(filters = {}) {
     captureId: filters.captureId || "",
     sessionId: filters.sessionId || "",
     sessionIds,
-    kind: filters.kind || "",
+    kinds: String(filters.kind || filters.kinds || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
     levels: String(filters.level || filters.levels || "")
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean),
     file: filters.file || "",
     q: filters.q || "",
-    from: filters.from ? new Date(filters.from).getTime() : null,
-    to: filters.to ? new Date(filters.to).getTime() : null,
-    limit: Number(filters.limit || 200)
+    from: normalizeTimeMs(filters.from),
+    to: normalizeTimeMs(filters.to),
+    limit: normalizeLimit(filters.limit)
   };
 }
 
 function matchesFilter(record, filters) {
-  if (filters.project && record.project.name !== filters.project) {
+  if (filters.project && record.project?.name !== filters.project) {
     return false;
   }
 
-  if (filters.sessionId && record.session.id !== filters.sessionId) {
+  if (filters.sessionId && record.session?.id !== filters.sessionId) {
     return false;
   }
 
@@ -112,11 +128,11 @@ function matchesFilter(record, filters) {
     return false;
   }
 
-  if (filters.sessionIds.length && !filters.sessionIds.includes(record.session.id)) {
+  if (filters.sessionIds.length && !filters.sessionIds.includes(record.session?.id)) {
     return false;
   }
 
-  if (filters.kind && record.kind !== filters.kind) {
+  if (filters.kinds.length && !filters.kinds.includes(record.kind)) {
     return false;
   }
 
@@ -131,11 +147,11 @@ function matchesFilter(record, filters) {
     }
   }
 
-  if (filters.from && new Date(record.occurredAt).getTime() < filters.from) {
+  if (filters.from !== null && (Number(record.occurredAtMs || 0) || toEpochMs(record.occurredAt)) < filters.from) {
     return false;
   }
 
-  if (filters.to && new Date(record.occurredAt).getTime() > filters.to) {
+  if (filters.to !== null && (Number(record.occurredAtMs || 0) || toEpochMs(record.occurredAt)) > filters.to) {
     return false;
   }
 
@@ -546,11 +562,15 @@ export class FileLogStore {
 
     const files = await walkFiles(this.projectDir);
     const records = [];
+    const recordFilters = {
+      ...normalizedFilters,
+      captureId: ""
+    };
 
     for (const filePath of files) {
       const fileRecords = await readJsonLines(filePath);
       for (const record of fileRecords) {
-        if (!matchesFilter(record, normalizedFilters)) {
+        if (!matchesFilter(record, recordFilters)) {
           continue;
         }
 
@@ -558,10 +578,16 @@ export class FileLogStore {
       }
     }
 
-    return groupRecordsIntoCaptures(records, {
+    const captures = groupRecordsIntoCaptures(records, {
       project: normalizedFilters.project,
       gapMs: filters.gapMs || undefined
     });
+
+    if (normalizedFilters.captureId) {
+      return captures.filter((capture) => capture.id === normalizedFilters.captureId);
+    }
+
+    return captures;
   }
 
   async deleteCapture(captureOrId) {
@@ -633,12 +659,36 @@ export class FileLogStore {
       return null;
     }
 
-    const captures = await this.listCaptures({
-      ...filters,
-      captureId
-    });
+    const captures = await this.listCaptures(filters);
 
     return captures.find((item) => item.id === captureId) || null;
+  }
+
+  async getLogById(logId) {
+    if (!logId) {
+      return null;
+    }
+
+    const sqlite = await this.getSqliteIndex();
+    if (sqlite) {
+      try {
+        return sqlite.getLogById(logId);
+      } catch (error) {
+        this.disableSqliteIndex(error);
+      }
+    }
+
+    // Fallback: scan all files
+    const files = await walkFiles(this.projectDir);
+    for (const filePath of files) {
+      const records = await readJsonLines(filePath);
+      const found = records.find((r) => r.id === logId);
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
   }
 
   async getLogsForCapture(capture, filters = {}) {
@@ -646,12 +696,102 @@ export class FileLogStore {
       return [];
     }
 
+    const explicitCaptureId = capture.id && !String(capture.id).includes(`-${capture.firstSeenMs}-`);
+    const baseLimit = normalizeLimit(filters.limit, MAX_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    const captureCount = normalizeLimit(capture.count, baseLimit, MAX_QUERY_LIMIT);
+    const limit = Math.max(baseLimit, captureCount);
+    const captureFilters = explicitCaptureId
+      ? {
+          ...filters,
+          project: filters.project || capture.project?.name || "",
+          captureId: capture.id,
+          limit
+        }
+      : {
+          ...filters,
+          project: filters.project || capture.project?.name || "",
+          sessionIds: filters.sessionIds || (Array.isArray(capture.sessionIds) ? capture.sessionIds.join(",") : ""),
+          from: filters.from || normalizeTimeIso(capture.firstSeenMs || capture.firstSeen),
+          to: filters.to || normalizeTimeIso(capture.lastSeenMs || capture.lastSeen),
+          limit
+        };
+
     const candidateLogs = await this.queryLogs({
-      ...filters,
-      limit: filters.limit || "5000"
+      ...captureFilters,
+      limit
     });
 
     return selectLogsForCapture([...candidateLogs].reverse(), capture);
+  }
+
+  async getLogsInWindow(filters = {}) {
+    const limit = normalizeLimit(filters.limit, MAX_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    return this.queryLogs({
+      ...filters,
+      limit
+    });
+  }
+
+  async cleanupByRetention(retentionMs, errorRetentionMs) {
+    const cutoff = Date.now() - retentionMs;
+    const errorCutoff = Date.now() - errorRetentionMs;
+    const files = await walkFiles(this.projectDir);
+    const deletedRecordIds = [];
+
+    for (const filePath of files) {
+      const records = await readJsonLines(filePath);
+      if (!records.length) {
+        await unlink(filePath).catch(() => {});
+        continue;
+      }
+
+      const latestMs = Math.max(...records.map((r) => r.occurredAtMs || r.receivedAtMs || 0));
+      if (latestMs < errorCutoff) {
+        for (const record of records) {
+          if (record.id) {
+            deletedRecordIds.push(record.id);
+          }
+        }
+        await unlink(filePath).catch(() => {});
+        continue;
+      }
+
+      const kept = records.filter((r) => {
+        const ts = r.occurredAtMs || r.receivedAtMs || 0;
+        if (r.level === "error") {
+          return ts >= errorCutoff;
+        }
+        return ts >= cutoff;
+      });
+
+      if (kept.length < records.length) {
+        for (const r of records) {
+          if (!kept.includes(r) && r.id) {
+            deletedRecordIds.push(r.id);
+          }
+        }
+
+        if (kept.length === 0) {
+          await unlink(filePath).catch(() => {});
+        } else {
+          await rewriteJsonlFile(filePath, kept);
+        }
+      }
+    }
+
+    // Sync SQLite index
+    if (deletedRecordIds.length) {
+      const sqlite = await this.getSqliteIndex();
+      if (sqlite) {
+        try {
+          sqlite.deleteRecordsByIds(deletedRecordIds);
+        } catch (error) {
+          this.disableSqliteIndex(error);
+        }
+      }
+    }
+
+    return deletedRecordIds.length;
   }
 
   async close() {

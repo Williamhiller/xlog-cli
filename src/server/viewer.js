@@ -7,14 +7,7 @@ const REACT_VIEWER_DIST_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../viewer-react/dist"
 );
-const NODE_MODULES_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../node_modules");
 const VIEWER_ASSET_CACHE = new Map();
-const VENDOR_ROOTS = {
-  remixicon: path.join(NODE_MODULES_ROOT, "remixicon", "fonts"),
-  "framer-motion": path.join(NODE_MODULES_ROOT, "framer-motion", "dist"),
-  "floating-ui": path.join(NODE_MODULES_ROOT, "@floating-ui", "dom", "dist"),
-  "floating-ui-core": path.join(NODE_MODULES_ROOT, "@floating-ui", "core", "dist")
-};
 
 function escapeHtml(value) {
   return String(value)
@@ -80,29 +73,4 @@ export async function buildViewerHtml({ title = "xlog" } = {}) {
 
 export async function getViewerTextAsset(name) {
   return readViewerAsset(name);
-}
-
-export function getVendorAssetPath(vendor, assetPath) {
-  const root = VENDOR_ROOTS[vendor];
-  if (!root) {
-    return null;
-  }
-
-  const safePath = path.normalize(assetPath).replace(/^(\.\.(\/|\\|$))+/, "");
-  const fullPath = path.resolve(root, safePath);
-
-  if (!fullPath.startsWith(root)) {
-    return null;
-  }
-
-  return fullPath;
-}
-
-export async function getVendorAsset(vendor, assetPath) {
-  const fullPath = getVendorAssetPath(vendor, assetPath);
-  if (!fullPath) {
-    return null;
-  }
-
-  return readFile(fullPath);
 }

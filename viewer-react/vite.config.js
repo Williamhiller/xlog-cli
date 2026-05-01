@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { viteSingleFile } from "vite-plugin-singlefile";
 import { xlogViteClientPlugin } from "../src/plugins/vite-plugin.js";
 import xlogBabelPlugin from "../src/plugins/babel-plugin.js";
 
@@ -35,8 +36,9 @@ export default defineConfig(({ command }) => ({
             }
           }
         : {}
-    )
-  ],
+    ),
+    command === "build" ? viteSingleFile() : null
+  ].filter(Boolean),
   root: __dirname,
   server: {
     host: viewerHost,
