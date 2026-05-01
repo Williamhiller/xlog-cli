@@ -145,6 +145,7 @@ export default {
 ### MCP（推荐）
 
 xlog-cli 内置 MCP server，AI 助手可以直接查询浏览器日志。
+默认情况下，MCP 会在同一个进程里启动本地 HTTP 日志接收服务，因此浏览器 runtime 不需要再单独运行 `xlog-cli serve`。
 
 ```bash
 npx xlog-cli mcp
@@ -168,6 +169,7 @@ npx xlog-cli mcp --root /path/to/project
 
 | 工具 | 用途 |
 |------|------|
+| `xlog_status` | 查看 MCP 状态、HTTP 日志接收地址、viewer 地址和存储信息。 |
 | `xlog_analyze` | 分析最近的日志，返回错误、警告和紧凑的 bugpack。默认分析最近 5 分钟。 |
 | `xlog_capture` | 为用户手动复现的 bug 捕获干净的时间窗口。先 `start`，再 `stop`。 |
 | `xlog_query` | 原始日志查询，支持完整过滤（级别、文件、时间范围等）。 |
@@ -179,6 +181,9 @@ npx xlog-cli mcp --root /path/to/project
 | `--retention` | `XLOG_RETENTION_MS` | 300000（5分钟） | 自动清理超过此时长的日志 |
 | `--capture-duration` | `XLOG_CAPTURE_DURATION_MS` | 60000（1分钟） | 建议的单次捕获最大时长 |
 | `--capture-gap` | `XLOG_CAPTURE_GAP_MS` | 10000（10秒） | 连续无新日志自动切分捕获 |
+| `--host` | `XLOG_HOST` | 127.0.0.1 | MCP 启动的 HTTP 日志接收服务 host |
+| `--port` | `XLOG_PORT` | 2718 | MCP 启动的 HTTP 日志接收服务端口 |
+| `--no-serve` | - | false | 禁用 MCP 托管的 HTTP 日志接收服务 |
 
 **典型 AI 调试流程：**
 
@@ -203,7 +208,7 @@ npx xlog-cli mcp --root /path/to/project
 
 ```bash
 npx xlog-cli serve                           # 启动服务（默认）
-npx xlog-cli mcp                             # 启动 MCP server 供 AI 助手使用
+npx xlog-cli mcp                             # 启动 MCP 和本地日志接收服务
 npx xlog-cli query --limit 20                # 查询日志
 npx xlog-cli sessions                        # 列出会话
 npx xlog-cli bugpack                         # 导出 bugpack
@@ -215,6 +220,7 @@ npx xlog-cli bugpack --session <sessionId>
 
 ```bash
 npx xlog-cli mcp --root /path/to/project --retention 180000 --capture-duration 30000
+npx xlog-cli mcp --root /path/to/project --no-serve
 ```
 
 ## 集成到应用

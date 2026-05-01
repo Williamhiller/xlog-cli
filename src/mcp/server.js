@@ -4,6 +4,7 @@ import { FileLogStore } from "../server/storage.js";
 import { buildCaptureSharePayload, scoreLog } from "../server/share.js";
 import { groupRecordsIntoCaptures } from "../server/captures.js";
 import { DEFAULT_DATA_DIR } from "../shared/constants.js";
+import { createXLogServer } from "../server/server.js";
 
 // ── Defaults ───────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ const ERROR_RETENTION_MS = 60 * 60 * 1000;         // 1 hour for error-level log
 export function createXLogMcpServer(options = {}) {
   const projectRoot = options.root || process.cwd();
   const dataDir = options.dataDir || DEFAULT_DATA_DIR;
+  const startHttpServer = options.startHttpServer !== false;
 
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
   const captureDurationMs = options.captureDurationMs ?? DEFAULT_CAPTURE_DURATION_MS;
@@ -23,6 +25,17 @@ export function createXLogMcpServer(options = {}) {
 
   const store = new FileLogStore({ projectRoot, dataDir });
   const server = new McpServer({ name: "xlog-mcp", version: "0.6.0" });
+  const httpServerReady = startHttpServer
+    ? createXLogServer({
+        projectRoot,
+        projectName: options.projectName,
+        dataDir,
+        host: options.host,
+        port: options.port,
+        allowFallbackPort: options.strictPort !== true,
+        silent: true
+      })
+    : Promise.resolve(null);
 
   // ── Periodic cleanup ──────────────────────────────────────────────
 
@@ -95,6 +108,49 @@ export function createXLogMcpServer(options = {}) {
   }
 
   // ── Tool 1: xlog_analyze ──────────────────────────────────────────
+
+  server.registerTool(
+    "xlog_status",
+    {
+      description:
+        "Report xlog MCP status and the HTTP ingest server used by browser runtimes. " +
+        "Use this to confirm whether browser logs can be received.",
+      inputSchema: z.object({})
+    },
+    async () => {
+      try {
+        const storage = await store.describeStorage();
+        const httpServer = await httpServerReady;
+
+        return ok({
+          mcp: {
+            ok: true,
+            root: projectRoot,
+            dataDir,
+            retentionMs,
+            captureDurationMs,
+            captureGapMs
+          },
+          httpServer: httpServer
+            ? {
+                ok: true,
+                serverUrl: httpServer.serverUrl,
+                viewerUrl: httpServer.viewerUrl,
+                host: httpServer.host,
+                port: httpServer.port,
+                dataDir: httpServer.dataDir
+              }
+            : {
+                ok: false,
+                disabled: true
+              },
+          storage
+        });
+      } catch (err) {
+        return error(err.message);
+      }
+    }
+  );
 
   server.registerTool(
     "xlog_analyze",
@@ -506,10 +562,14 @@ export function createXLogMcpServer(options = {}) {
       clearInterval(cleanupTimer);
       cleanupTimer = null;
     }
+    const httpServer = await httpServerReady.catch(() => null);
+    if (httpServer) {
+      await httpServer.close();
+    }
     await originalClose();
   };
 
-  return { server, store };
+  return { server, store, httpServerReady };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

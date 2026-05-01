@@ -145,6 +145,7 @@ This also works as a Babel plugin — it injects source file/line/column metadat
 ### MCP (Recommended)
 
 xlog-cli ships an MCP server so AI assistants can query browser logs directly.
+By default, MCP also starts the local HTTP ingest server in the same process, so browser runtimes can send logs without a separate `xlog-cli serve` process.
 
 ```bash
 npx xlog-cli mcp
@@ -168,6 +169,7 @@ npx xlog-cli mcp --root /path/to/project
 
 | Tool | Purpose |
 |------|---------|
+| `xlog_status` | Report MCP status, HTTP ingest URL, viewer URL, and storage details. |
 | `xlog_analyze` | Analyze recent logs. Returns errors, warnings, and a compact bugpack. Default: last 5 minutes. |
 | `xlog_capture` | Capture a clean time window for user-driven reproduction. Use `start` then `stop`. |
 | `xlog_query` | Raw log query with full filtering (level, file, time range, etc.). |
@@ -179,6 +181,9 @@ npx xlog-cli mcp --root /path/to/project
 | `--retention` | `XLOG_RETENTION_MS` | 300000 (5min) | Auto-cleanup logs older than this |
 | `--capture-duration` | `XLOG_CAPTURE_DURATION_MS` | 60000 (1min) | Suggested max capture window |
 | `--capture-gap` | `XLOG_CAPTURE_GAP_MS` | 10000 (10s) | Inactivity gap to split captures |
+| `--host` | `XLOG_HOST` | 127.0.0.1 | HTTP ingest host started with MCP |
+| `--port` | `XLOG_PORT` | 2718 | HTTP ingest port started with MCP |
+| `--no-serve` | - | false | Disable the MCP-managed HTTP ingest server |
 
 **Typical AI workflow:**
 
@@ -203,7 +208,7 @@ Best results:
 
 ```bash
 npx xlog-cli serve                           # Start server (default)
-npx xlog-cli mcp                             # Start MCP server for AI assistants
+npx xlog-cli mcp                             # Start MCP and the local log ingest server
 npx xlog-cli query --limit 20                # Query logs
 npx xlog-cli sessions                        # List sessions
 npx xlog-cli bugpack                         # Export bugpack
@@ -215,6 +220,7 @@ npx xlog-cli bugpack --session <sessionId>
 
 ```bash
 npx xlog-cli mcp --root /path/to/project --retention 180000 --capture-duration 30000
+npx xlog-cli mcp --root /path/to/project --no-serve
 ```
 
 ## Integrate In An App

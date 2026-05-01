@@ -202,9 +202,14 @@ async function runMcp(args, options) {
   const captureDurationMs = parseMs(readOption(args, "--capture-duration", ""), 60 * 1000);
   const captureGapMs = parseMs(readOption(args, "--capture-gap", ""), 10 * 1000);
 
-  const { server, store } = createXLogMcpServer({
+  const { server, store, httpServerReady } = createXLogMcpServer({
     root: options.root,
     dataDir: options.dataDir,
+    projectName: options.projectName,
+    host: options.host,
+    port: options.port,
+    strictPort: options.strictPort,
+    startHttpServer: !hasFlag(args, "--no-serve"),
     retentionMs,
     captureDurationMs,
     captureGapMs
@@ -213,7 +218,9 @@ async function runMcp(args, options) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`[xlog-mcp] started | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
+  const httpServer = await httpServerReady;
+  const httpStatus = httpServer ? ` | serve=${httpServer.serverUrl}` : " | serve=disabled";
+  console.error(`[xlog-mcp] started${httpStatus} | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, async () => {

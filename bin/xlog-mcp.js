@@ -13,6 +13,10 @@ function readOption(args, name, fallback) {
   return args[index + 1];
 }
 
+function hasFlag(args, name) {
+  return args.includes(name);
+}
+
 function parseMs(value, fallback) {
   if (!value) return fallback;
   const n = Number(value);
@@ -22,6 +26,11 @@ function parseMs(value, fallback) {
 const args = process.argv.slice(2);
 const root = path.resolve(readOption(args, "--root", process.env.XLOG_ROOT || process.cwd()));
 const dataDir = readOption(args, "--data-dir", process.env.XLOG_DATA_DIR || ".xlog");
+const projectName = readOption(args, "--project", process.env.XLOG_PROJECT_NAME || path.basename(root));
+const host = readOption(args, "--host", process.env.XLOG_HOST || "127.0.0.1");
+const port = Number(readOption(args, "--port", process.env.XLOG_PORT || "2718"));
+const strictPort = hasFlag(args, "--strict-port");
+const startHttpServer = !hasFlag(args, "--no-serve");
 const retentionMs = parseMs(
   readOption(args, "--retention", null) || process.env.XLOG_RETENTION_MS,
   5 * 60 * 1000
@@ -35,14 +44,25 @@ const captureGapMs = parseMs(
   10 * 1000
 );
 
-const { server, store } = createXLogMcpServer({
-  root, dataDir, retentionMs, captureDurationMs, captureGapMs
+const { server, store, httpServerReady } = createXLogMcpServer({
+  root,
+  dataDir,
+  projectName,
+  host,
+  port,
+  strictPort,
+  startHttpServer,
+  retentionMs,
+  captureDurationMs,
+  captureGapMs
 });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-console.error(`[xlog-mcp] started | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
+const httpServer = await httpServerReady;
+const httpStatus = httpServer ? ` | serve=${httpServer.serverUrl}` : " | serve=disabled";
+console.error(`[xlog-mcp] started${httpStatus} | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, async () => {
