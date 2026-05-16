@@ -38,7 +38,7 @@ If you installed globally, use `xlog-cli ...`. If you installed locally, use `np
 
 ## Quick Integration (No Install)
 
-Copy a single JS file into your project — no `npm install` required. All 18 `console.*` methods are intercepted with full serialization, stack traces, capture grouping, and error listeners.
+Copy a single JS file into your project — no `npm install` required. Error listeners are captured automatically; global `console.*` interception is opt-in so third-party library warnings do not pollute project logs by default.
 
 ### Regular Web Page
 
@@ -138,7 +138,7 @@ export default {
 };
 ```
 
-This also works as a Babel plugin — it injects source file/line/column metadata into every `console.*` call for precise callsite tracking.
+This also works as a Babel plugin — it injects source file/line/column metadata into project `console.*` calls for precise callsite tracking.
 
 ## For AI
 
@@ -183,6 +183,7 @@ npx xlog-cli mcp --root /path/to/project
 | `--capture-gap` | `XLOG_CAPTURE_GAP_MS` | 10000 (10s) | Inactivity gap to split captures |
 | `--host` | `XLOG_HOST` | 127.0.0.1 | HTTP ingest host started with MCP |
 | `--port` | `XLOG_PORT` | 2718 | HTTP ingest port started with MCP |
+| `--debug-dom-snapshots` | `XLOG_DEBUG_DOM_SNAPSHOTS` | false | Enable DOM debug snapshots with sanitized full DOM details |
 | `--no-serve` | - | false | Disable the MCP-managed HTTP ingest server |
 
 **Typical AI workflow:**
@@ -208,7 +209,9 @@ Best results:
 
 ```bash
 npx xlog-cli serve                           # Start server (default)
+npx xlog-cli serve --debug-dom-snapshots     # Enable full DOM debug snapshots
 npx xlog-cli mcp                             # Start MCP and the local log ingest server
+npx xlog-cli mcp --debug-dom-snapshots       # Enable DOM debug snapshots for the MCP-managed server
 npx xlog-cli query --limit 20                # Query logs
 npx xlog-cli sessions                        # List sessions
 npx xlog-cli bugpack                         # Export bugpack
@@ -253,9 +256,12 @@ import { installXLog } from "xlog-cli/runtime";
 installXLog({
   serverUrl: "http://127.0.0.1:2718",
   projectName: "my-app",
-  tool: "browser"
+  tool: "browser",
+  debugDomSnapshots: true
 });
 ```
+
+Set `captureGlobalConsole: true` only when you intentionally want to persist console calls without Babel metadata, including third-party library warnings.
 
 ### Manual logging
 

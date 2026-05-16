@@ -1,6 +1,7 @@
 import { groupRecordsIntoCaptures } from "./captures.js";
 import { toEpochMs } from "../shared/time.js";
 import { isToolingNoise as _isToolingNoise } from "../shared/noise.js";
+import { collapseRepeatedLogs } from "../shared/repeated-logs.js";
 
 const DEFAULT_LIMITS = {
   keyLogLimit: 18,
@@ -302,6 +303,60 @@ function buildStackPreview(log, limits) {
   return null;
 }
 
+function collectDomSnapshots(value, snapshots = [], seen = new WeakSet()) {
+  if (!value || typeof value !== "object") {
+    return snapshots;
+  }
+
+  if (seen.has(value)) {
+    return snapshots;
+  }
+
+  seen.add(value);
+
+  if (value.type === "dom" && value.captureMode === "debug") {
+    snapshots.push(value);
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectDomSnapshots(item, snapshots, seen);
+    }
+    return snapshots;
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    collectDomSnapshots(nestedValue, snapshots, seen);
+  }
+
+  return snapshots;
+}
+
+function compactDomSnapshot(snapshot, limits) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+
+  const output = {
+    selector: truncateText(snapshot.selector || `<${String(snapshot.tagName || "element").toLowerCase()}>`, 140)
+  };
+
+  const text = truncateText(snapshot.text || "", Math.min(limits.maxTextLength, 160));
+  if (text) {
+    output.text = text;
+  }
+
+  if (snapshot.hash) {
+    output.hash = snapshot.hash;
+  }
+
+  if (snapshot.tooLarge) {
+    output.tooLarge = true;
+  }
+
+  return output;
+}
+
 export function compactShareLog(log, { includeSessionId = false, limits = DEFAULT_LIMITS } = {}) {
   const output = {
     ts: log.occurredAt,
@@ -313,6 +368,12 @@ export function compactShareLog(log, { includeSessionId = false, limits = DEFAUL
 
   if (log.sequence) {
     output.seq = log.sequence;
+  }
+
+  if (Number(log.repeatCount || 1) > 1) {
+    output.repeat = log.repeatCount;
+    output.firstTs = log.firstOccurredAt || log.occurredAt;
+    output.lastTs = log.lastOccurredAt || log.occurredAt;
   }
 
   const location = compactLocation(log.callsite);
@@ -346,11 +407,47 @@ export function compactShareLog(log, { includeSessionId = false, limits = DEFAUL
     }));
   }
 
+  const domSnapshots = collectDomSnapshots(log?.args);
+  if (domSnapshots.length) {
+    output.dom = compactDomSnapshot(domSnapshots[0], limits);
+  }
+
   if (isToolingNoise(log)) {
     output.noise = true;
   }
 
   return output;
+}
+
+export function compactAiLog(log, { includeSessionId = false, limits = MCP_LIMITS } = {}) {
+  if (!log || typeof log !== "object") {
+    return null;
+  }
+
+  const output = {
+    id: log.id || null,
+    ...compactShareLog(log, { includeSessionId, limits })
+  };
+
+  if (log.receivedAt && log.receivedAt !== log.occurredAt) {
+    output.recv = log.receivedAt;
+  }
+
+  if (log?.capture?.id) {
+    output.capture = log.capture.id;
+  }
+
+  return output;
+}
+
+export function compactAiLogs(logs, { includeSessionId = false, limits = MCP_LIMITS } = {}) {
+  if (!Array.isArray(logs) || !logs.length) {
+    return [];
+  }
+
+  return logs
+    .map((log) => compactAiLog(log, { includeSessionId, limits }))
+    .filter(Boolean);
 }
 
 function compactCapture(capture, totalLogs, sharedLogs) {
@@ -388,16 +485,20 @@ function sanitizeFileName(value) {
 export function buildCaptureSharePayload({ capture = null, logs = [], profile = "default" } = {}) {
   const limits = getLimits(profile);
   const sortedLogs = [...logs].filter(Boolean).sort(compareLogsAsc);
+  const collapsedLogs = collapseRepeatedLogs(sortedLogs);
   const captureSummary = capture || groupRecordsIntoCaptures(sortedLogs)[0] || null;
   const includeSessionId = Number(captureSummary?.sessionCount || 0) > 1;
-  const keyLogs = selectKeyLogs(sortedLogs, limits).map((log) =>
+  const keyLogs = selectKeyLogs(collapsedLogs, limits).map((log) =>
     compactShareLog(log, { includeSessionId, limits })
   );
 
   return {
     v: 1,
     type: "xlog.capture.share",
-    capture: compactCapture(captureSummary, sortedLogs.length, keyLogs.length),
+    capture: {
+      ...compactCapture(captureSummary, sortedLogs.length, keyLogs.length),
+      collapsedLogs: collapsedLogs.length
+    },
     keyLogs
   };
 }

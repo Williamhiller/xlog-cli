@@ -20,6 +20,24 @@ function hasFlag(args, name) {
   return args.includes(name);
 }
 
+function readBooleanEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (typeof raw !== "string") {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
 function printJson(value) {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -32,6 +50,7 @@ function readBaseOptions(args) {
   const projectName = readOption(args, "--project", path.basename(root));
   const strictPort = hasFlag(args, "--strict-port");
   const silent = hasFlag(args, "--silent");
+  const debugDomSnapshots = hasFlag(args, "--debug-dom-snapshots") || readBooleanEnv("XLOG_DEBUG_DOM_SNAPSHOTS", false);
 
   return {
     root,
@@ -40,7 +59,8 @@ function readBaseOptions(args) {
     dataDir,
     projectName,
     strictPort,
-    silent
+    silent,
+    debugDomSnapshots
   };
 }
 
@@ -59,7 +79,8 @@ async function runServe(options) {
     host: options.host,
     dataDir: options.dataDir,
     allowFallbackPort: !options.strictPort,
-    silent: options.silent
+    silent: options.silent,
+    debugDomSnapshots: options.debugDomSnapshots
   });
 
   process.stdin.resume();
@@ -212,7 +233,8 @@ async function runMcp(args, options) {
     startHttpServer: !hasFlag(args, "--no-serve"),
     retentionMs,
     captureDurationMs,
-    captureGapMs
+    captureGapMs,
+    debugDomSnapshots: options.debugDomSnapshots
   });
 
   const transport = new StdioServerTransport();

@@ -38,7 +38,7 @@ http://127.0.0.1:2718/viewer/
 
 ## 快速集成（无需安装）
 
-将单个 JS 文件拷贝到项目中即可使用，不需要 `npm install`。支持全部 18 个 `console.*` 方法，包含完整序列化、堆栈解析、捕获分组和错误监听。
+将单个 JS 文件拷贝到项目中即可使用，不需要 `npm install`。默认自动捕获 error 监听器；全局 `console.*` 持久化需要显式开启，避免第三方库 warning 污染项目日志。
 
 ### 普通网页
 
@@ -138,7 +138,7 @@ export default {
 };
 ```
 
-同时也支持作为 Babel 插件使用——它会为每个 `console.*` 调用注入源文件、行号、列号元数据，实现精确调用位置追踪。
+同时也支持作为 Babel 插件使用——它会为项目内的 `console.*` 调用注入源文件、行号、列号元数据，实现精确调用位置追踪。
 
 ## 给 AI 用
 
@@ -183,6 +183,7 @@ npx xlog-cli mcp --root /path/to/project
 | `--capture-gap` | `XLOG_CAPTURE_GAP_MS` | 10000（10秒） | 连续无新日志自动切分捕获 |
 | `--host` | `XLOG_HOST` | 127.0.0.1 | MCP 启动的 HTTP 日志接收服务 host |
 | `--port` | `XLOG_PORT` | 2718 | MCP 启动的 HTTP 日志接收服务端口 |
+| `--debug-dom-snapshots` | `XLOG_DEBUG_DOM_SNAPSHOTS` | false | 开启 DOM debug snapshot，保存清洗后的完整 DOM 详情 |
 | `--no-serve` | - | false | 禁用 MCP 托管的 HTTP 日志接收服务 |
 
 **典型 AI 调试流程：**
@@ -208,7 +209,9 @@ npx xlog-cli mcp --root /path/to/project
 
 ```bash
 npx xlog-cli serve                           # 启动服务（默认）
+npx xlog-cli serve --debug-dom-snapshots     # 开启完整 DOM debug snapshot
 npx xlog-cli mcp                             # 启动 MCP 和本地日志接收服务
+npx xlog-cli mcp --debug-dom-snapshots       # 让 MCP 托管的服务开启 DOM debug snapshot
 npx xlog-cli query --limit 20                # 查询日志
 npx xlog-cli sessions                        # 列出会话
 npx xlog-cli bugpack                         # 导出 bugpack
@@ -253,9 +256,12 @@ import { installXLog } from "xlog-cli/runtime";
 installXLog({
   serverUrl: "http://127.0.0.1:2718",
   projectName: "my-app",
-  tool: "browser"
+  tool: "browser",
+  debugDomSnapshots: true
 });
 ```
+
+只有在明确需要持久化没有 Babel 元数据的 console 调用时，才设置 `captureGlobalConsole: true`，这会包含第三方库 warning。
 
 ### 手动记录日志
 

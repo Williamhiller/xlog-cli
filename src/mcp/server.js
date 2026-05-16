@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
 import { FileLogStore } from "../server/storage.js";
-import { buildCaptureSharePayload, scoreLog } from "../server/share.js";
+import { buildCaptureSharePayload, compactAiLogs, scoreLog } from "../server/share.js";
 import { groupRecordsIntoCaptures } from "../server/captures.js";
 import { DEFAULT_DATA_DIR } from "../shared/constants.js";
 import { createXLogServer } from "../server/server.js";
+import { collapseRepeatedLogs } from "../shared/repeated-logs.js";
 
 // ── Defaults ───────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export function createXLogMcpServer(options = {}) {
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
   const captureDurationMs = options.captureDurationMs ?? DEFAULT_CAPTURE_DURATION_MS;
   const captureGapMs = options.captureGapMs ?? DEFAULT_CAPTURE_GAP_MS;
+  const debugDomSnapshots = options.debugDomSnapshots === true;
 
   const store = new FileLogStore({ projectRoot, dataDir });
   const server = new McpServer({ name: "xlog-mcp", version: "0.6.0" });
@@ -33,7 +35,8 @@ export function createXLogMcpServer(options = {}) {
         host: options.host,
         port: options.port,
         allowFallbackPort: options.strictPort !== true,
-        silent: true
+        silent: true,
+        debugDomSnapshots
       })
     : Promise.resolve(null);
 
@@ -129,7 +132,8 @@ export function createXLogMcpServer(options = {}) {
             dataDir,
             retentionMs,
             captureDurationMs,
-            captureGapMs
+            captureGapMs,
+            debugDomSnapshots
           },
           httpServer: httpServer
             ? {
@@ -138,7 +142,8 @@ export function createXLogMcpServer(options = {}) {
                 viewerUrl: httpServer.viewerUrl,
                 host: httpServer.host,
                 port: httpServer.port,
-                dataDir: httpServer.dataDir
+                dataDir: httpServer.dataDir,
+                debugDomSnapshots: httpServer.debugDomSnapshots === true
               }
             : {
                 ok: false,
@@ -170,7 +175,7 @@ export function createXLogMcpServer(options = {}) {
         to: z.string().optional().describe("End of time range (ISO 8601)"),
         project: z.string().optional().describe("Filter by project name"),
         limit: z.number().optional().describe("Max logs to analyze (default: 200)"),
-        includeRaw: z.boolean().optional().describe("Include full raw logs in response (default: false)")
+        includeRaw: z.boolean().optional().describe("Include full raw logs in response (default: false; can be large)")
       })
     },
     async (params) => {
@@ -200,6 +205,7 @@ export function createXLogMcpServer(options = {}) {
           });
         }
 
+        const collapsedLogs = collapseRepeatedLogs(logs);
         const stats = computeStats(logs);
         const dedup = dedupErrors(logs);
         const pages = new Set();
@@ -224,6 +230,7 @@ export function createXLogMcpServer(options = {}) {
 
         const result = {
           total: logs.length,
+          collapsedTotal: collapsedLogs.length,
           errors: stats.errorCount,
           warnings: stats.warnCount,
           dedup,
@@ -234,7 +241,7 @@ export function createXLogMcpServer(options = {}) {
         };
 
         if (params.includeRaw) {
-          result.logs = logs;
+          result.logs = collapsedLogs;
         }
 
         return ok(result);
@@ -308,6 +315,7 @@ export function createXLogMcpServer(options = {}) {
             });
           }
 
+          const collapsedLogs = collapseRepeatedLogs(allLogs);
           const stats = computeStats(allLogs);
           const dedup = dedupErrors(allLogs);
           const pages = new Set();
@@ -341,6 +349,7 @@ export function createXLogMcpServer(options = {}) {
             duration,
             overLimit,
             total: allLogs.length,
+            collapsedTotal: collapsedLogs.length,
             errors: stats.errorCount,
             warnings: stats.warnCount,
             dedup,
@@ -367,7 +376,9 @@ export function createXLogMcpServer(options = {}) {
   server.registerTool(
     "xlog_query",
     {
-      description: "Raw log query with full filtering. Use for precise investigation.",
+      description:
+        "Query logs with full filtering. Returns compact AI-safe logs by default; " +
+        "set includeRaw=true only when full serialized args are necessary.",
       inputSchema: z.object({
         level: z.string().optional().describe("Filter by log level, comma-separated"),
         kind: z.string().optional().describe("Filter by log kind"),
@@ -378,7 +389,8 @@ export function createXLogMcpServer(options = {}) {
         session: z.string().optional().describe("Filter by session ID"),
         capture: z.string().optional().describe("Filter by capture ID"),
         project: z.string().optional().describe("Filter by project name"),
-        limit: z.number().optional().describe("Max results (default: 20)")
+        limit: z.number().optional().describe("Max results (default: 20)"),
+        includeRaw: z.boolean().optional().describe("Include full raw logs with serialized args (default: false; can be large)")
       })
     },
     async (params) => {
@@ -396,7 +408,14 @@ export function createXLogMcpServer(options = {}) {
           limit: String(params.limit ?? 20)
         });
         const storage = await store.describeStorage();
-        return ok({ storage, count: logs.length, logs });
+        const collapsedLogs = collapseRepeatedLogs(logs);
+        return ok({
+          storage,
+          count: logs.length,
+          collapsedCount: collapsedLogs.length,
+          logs: params.includeRaw ? collapsedLogs : compactAiLogs(collapsedLogs),
+          compact: !params.includeRaw
+        });
       } catch (err) {
         return error(err.message);
       }
@@ -415,7 +434,8 @@ export function createXLogMcpServer(options = {}) {
       inputSchema: z.object({
         logId: z.string().describe("The ID of the log entry to get context for"),
         windowMs: z.number().optional().describe("Time window in ms before/after the log (default: 5000)"),
-        limit: z.number().optional().describe("Max surrounding logs to return (default: 30)")
+        limit: z.number().optional().describe("Max surrounding logs to return (default: 30)"),
+        includeRaw: z.boolean().optional().describe("Include full raw context logs with serialized args (default: false; can be large)")
       })
     },
     async (params) => {
@@ -444,6 +464,8 @@ export function createXLogMcpServer(options = {}) {
         // Sort ascending for context view
         contextLogs.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
 
+        const collapsedContextLogs = collapseRepeatedLogs(contextLogs);
+
         return ok({
           target: {
             id: target.id,
@@ -456,7 +478,9 @@ export function createXLogMcpServer(options = {}) {
           },
           windowMs,
           total: contextLogs.length,
-          logs: contextLogs
+          collapsedTotal: collapsedContextLogs.length,
+          logs: params.includeRaw ? collapsedContextLogs : compactAiLogs(collapsedContextLogs),
+          compact: !params.includeRaw
         });
       } catch (err) {
         return error(err.message);

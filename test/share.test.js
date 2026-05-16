@@ -1,6 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildCaptureSharePayload, scoreLog, isToolingNoise, compactShareLog, PROFILES } from "../src/server/share.js";
+import { collapseRepeatedLogs } from "../src/shared/repeated-logs.js";
+import {
+  buildCaptureSharePayload,
+  scoreLog,
+  isToolingNoise,
+  compactShareLog,
+  compactAiLog,
+  compactAiLogs,
+  PROFILES
+} from "../src/server/share.js";
 
 function makeLog(overrides = {}) {
   const now = new Date().toISOString();
@@ -80,6 +89,15 @@ describe("isToolingNoise", () => {
     assert.ok(isToolingNoise(makeLog({ callsite: { file: "/@react-refresh" } })));
   });
 
+  it("detects repeated crawl health-check logs", () => {
+    assert.ok(isToolingNoise(makeLog({ text: "[crawl] isDegraded false \"\"" })));
+  });
+
+  it("keeps warning and error logs even when text looks noisy", () => {
+    assert.ok(!isToolingNoise(makeLog({ level: "warn", text: "[crawl] isDegraded false \"\"" })));
+    assert.ok(!isToolingNoise(makeLog({ level: "error", text: "vite connected" })));
+  });
+
   it("does not flag normal logs", () => {
     assert.ok(!isToolingNoise(makeLog({ text: "User clicked button" })));
   });
@@ -131,13 +149,134 @@ describe("compactShareLog", () => {
     assert.equal(compact.net[0].status, 500);
   });
 
-  it("respects MCP profile limits for longer text", () => {
-    const longText = "x".repeat(500);
-    const log = makeLog({ text: longText });
-    const defaultCompact = compactShareLog(log, { limits: PROFILES.default });
-    const mcpCompact = compactShareLog(log, { limits: PROFILES.mcp });
-    assert.ok(mcpCompact.msg.length > defaultCompact.msg.length);
-    assert.ok(mcpCompact.msg.length <= 600);
+  it("keeps DOM debug snapshots compact in share payloads", () => {
+    const log = makeLog({
+      args: [
+        { type: "string", value: "clicked" },
+        {
+          type: "dom",
+          tagName: "BUTTON",
+          selector: "button#save.primary[id=save]",
+          text: "Save changes",
+          hash: "fnv1a-12345678",
+          tooLarge: true,
+          outerHTMLSanitized: '<button id="save">Save changes</button>',
+          captureMode: "debug"
+        }
+      ]
+    });
+
+    const compact = compactShareLog(log);
+    assert.deepEqual(compact.dom, {
+      selector: "button#save.primary[id=save]",
+      text: "Save changes",
+      hash: "fnv1a-12345678",
+      tooLarge: true
+    });
+    assert.equal(compact.outerHTMLSanitized, undefined);
+  });
+
+  it("includes compact DOM debug snapshots in AI payloads without raw HTML", () => {
+    const log = makeLog({
+      args: [
+        {
+          type: "dom",
+          tagName: "BUTTON",
+          selector: "button#save.primary[id=save]",
+          text: "Save changes",
+          hash: "fnv1a-12345678",
+          outerHTMLSanitized: '<button id="save">Save changes</button>',
+          captureMode: "debug"
+        }
+      ]
+    });
+
+    const compact = compactAiLog(log);
+    assert.deepEqual(compact.dom, {
+      selector: "button#save.primary[id=save]",
+      text: "Save changes",
+      hash: "fnv1a-12345678"
+    });
+    assert.equal(compact.outerHTMLSanitized, undefined);
+  });
+});
+
+describe("compactAiLog", () => {
+  it("keeps identity and compact previews without raw serialized args", () => {
+    const largeArgs = [
+      {
+        type: "object",
+        ctor: "Object",
+        entries: Array.from({ length: 40 }, (_, index) => ({
+          key: `field${index}`,
+          value: { type: "string", value: "x".repeat(1000) }
+        })),
+        truncated: true
+      }
+    ];
+    const log = makeLog({
+      id: "large-log",
+      text: "large object",
+      args: largeArgs,
+      callsite: { file: "src/App.jsx", line: 9 }
+    });
+
+    const compact = compactAiLog(log);
+
+    assert.equal(compact.id, "large-log");
+    assert.equal(compact.msg, "large object");
+    assert.equal(compact.site, "src/App.jsx:9");
+    assert.equal(compact.args, "Object");
+    assert.equal(compact.entries, undefined);
+  });
+
+  it("compacts arrays of logs", () => {
+    const logs = compactAiLogs([
+      makeLog({ id: "one" }),
+      makeLog({ id: "two", level: "error", text: "bad" })
+    ]);
+
+    assert.deepEqual(logs.map((log) => log.id), ["one", "two"]);
+    assert.equal(logs[1].lvl, "error");
+  });
+});
+
+describe("collapseRepeatedLogs", () => {
+  it("collapses adjacent identical logs and records repeat metadata", () => {
+    const logs = [
+      makeLog({ id: "a", text: "activityInfoReady false", sequence: 1, callsite: { file: "src/View.jsx", line: 68, column: 5 } }),
+      makeLog({ id: "b", text: "activityInfoReady false", sequence: 2, callsite: { file: "src/View.jsx", line: 68, column: 5 } }),
+      makeLog({ id: "c", text: "different", sequence: 3, callsite: { file: "src/View.jsx", line: 68, column: 5 } })
+    ];
+
+    const collapsed = collapseRepeatedLogs(logs);
+    assert.equal(collapsed.length, 2);
+    assert.equal(collapsed[0].repeatCount, 2);
+    assert.deepEqual(collapsed[0].duplicateIds, ["a", "b"]);
+  });
+
+  it("tracks first and last occurrence timestamps in ascending order", () => {
+    const logs = [
+      makeLog({ id: "a", text: "same", sequence: 1, occurredAt: "2026-01-01T00:00:01.000Z", occurredAtMs: 1, callsite: { file: "src/View.jsx", line: 68, column: 5 } }),
+      makeLog({ id: "b", text: "same", sequence: 2, occurredAt: "2026-01-01T00:00:02.000Z", occurredAtMs: 2, callsite: { file: "src/View.jsx", line: 68, column: 5 } })
+    ];
+
+    const collapsed = collapseRepeatedLogs(logs);
+    assert.equal(collapsed[0].firstOccurredAt, "2026-01-01T00:00:01.000Z");
+    assert.equal(collapsed[0].lastOccurredAt, "2026-01-01T00:00:02.000Z");
+    assert.equal(collapsed[0].firstOccurredAtMs, 1);
+    assert.equal(collapsed[0].lastOccurredAtMs, 2);
+  });
+
+  it("does not collapse non-adjacent duplicates", () => {
+    const repeated = makeLog({ text: "same", callsite: { file: "src/View.jsx", line: 1 } });
+    const collapsed = collapseRepeatedLogs([
+      repeated,
+      makeLog({ text: "other", callsite: { file: "src/View.jsx", line: 1 } }),
+      { ...repeated, id: "later" }
+    ]);
+
+    assert.equal(collapsed.length, 3);
   });
 });
 
@@ -174,5 +313,22 @@ describe("buildCaptureSharePayload", () => {
     const payload = buildCaptureSharePayload({ logs: [] });
     assert.equal(payload.v, 1);
     assert.equal(payload.keyLogs.length, 0);
+  });
+
+  it("collapses repeated key logs for AI payloads", () => {
+    const logs = Array.from({ length: 4 }, (_, index) =>
+      makeLog({
+        id: `repeat-${index}`,
+        text: "activityInfoReady false",
+        sequence: index + 1,
+        occurredAtMs: Date.now() + index,
+        callsite: { file: "src/component/event/automatic/View.jsx", line: 68, column: 5 }
+      })
+    );
+
+    const payload = buildCaptureSharePayload({ logs });
+    assert.equal(payload.capture.totalLogs, 4);
+    assert.equal(payload.capture.collapsedLogs, 1);
+    assert.equal(payload.keyLogs[0].repeat, 4);
   });
 });

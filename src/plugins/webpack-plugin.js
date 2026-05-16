@@ -100,7 +100,8 @@ export class XLogWebpackPlugin {
           __XLOG_PROJECT_NAME__: JSON.stringify(
             this.options.projectName || path.basename(compiler.context || process.cwd())
           ),
-          __XLOG_TOOL__: JSON.stringify("webpack")
+          __XLOG_TOOL__: JSON.stringify("webpack"),
+          __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true)
         });
 
         definePlugin.apply(compiler);

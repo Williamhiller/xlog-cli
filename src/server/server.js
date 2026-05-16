@@ -159,6 +159,7 @@ export async function createXLogServer(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd());
   const dataDir = options.dataDir || DEFAULT_DATA_DIR;
   const projectName = options.projectName || projectNameFromRoot(projectRoot);
+  const debugDomSnapshots = options.debugDomSnapshots === true;
   const store = new FileLogStore({ projectRoot, dataDir });
   const sseClients = new Set();
 
@@ -182,7 +183,7 @@ export async function createXLogServer(options = {}) {
         return;
       }
 
-      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/viewer")) {
+      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/viewer" || url.pathname === "/viewer/")) {
         writeText(
           res,
           200,
@@ -221,6 +222,7 @@ export async function createXLogServer(options = {}) {
           ok: true,
           projectName,
           dataDir: path.resolve(projectRoot, dataDir),
+          debugDomSnapshots,
           storage
         });
         return;
@@ -434,6 +436,7 @@ export async function createXLogServer(options = {}) {
       projectName,
       projectRoot,
       dataDir: path.resolve(projectRoot, dataDir),
+      debugDomSnapshots,
       serverUrl: `http://${host}:${port}`,
       viewerUrl: `http://${host}:${port}/`,
       close: async () => {

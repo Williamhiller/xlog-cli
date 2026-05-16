@@ -31,10 +31,11 @@ function createRuntimeInstallCode({ serverUrl, projectName, tool }) {
   return createRuntimeInstallSnippet({ serverUrl, projectName, tool });
 }
 
-function createRuntimeDefines({ serverUrl, projectName, tool }) {
+function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots }) {
   const define = {
     __XLOG_PROJECT_NAME__: JSON.stringify(projectName),
-    __XLOG_TOOL__: JSON.stringify(tool)
+    __XLOG_TOOL__: JSON.stringify(tool),
+    __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(debugDomSnapshots === true)
   };
 
   if (serverUrl) {
@@ -46,7 +47,7 @@ function createRuntimeDefines({ serverUrl, projectName, tool }) {
   };
 }
 
-function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source }) {
+function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, debugDomSnapshots }) {
   return [
     `import { installXLog } from "xlog-cli/runtime";`,
     "",
@@ -54,7 +55,8 @@ function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source }) {
     `  serverUrl: ${JSON.stringify(serverUrl)},`,
     `  projectName: ${JSON.stringify(projectName)},`,
     `  tool: ${JSON.stringify(tool)},`,
-    `  source: ${JSON.stringify(source ?? undefined)}`,
+    `  source: ${JSON.stringify(source ?? undefined)},`,
+    `  debugDomSnapshots: ${JSON.stringify(debugDomSnapshots === true)}`,
     "});"
   ].join("\n");
 }
@@ -243,7 +245,8 @@ export function xlogVitePlugin(options = {}) {
         return {
           serverUrl,
           projectName: options.projectName || path.basename(configRoot),
-          tool: "vite"
+          tool: "vite",
+          debugDomSnapshots: options.debugDomSnapshots === true
         };
       }
     }),
@@ -252,7 +255,8 @@ export function xlogVitePlugin(options = {}) {
       return createRuntimeDefines({
         serverUrl: options.serverUrl,
         projectName: options.projectName || path.basename(root),
-        tool: "vite"
+        tool: "vite",
+        debugDomSnapshots: options.debugDomSnapshots === true
       });
     },
     async configResolved(config) {
@@ -297,7 +301,8 @@ export function xlogViteClientPlugin(options = {}) {
         return {
           serverUrl: options.serverUrl,
           projectName: options.projectName || path.basename(configRoot),
-          tool: options.tool || "vite"
+          tool: options.tool || "vite",
+          debugDomSnapshots: options.debugDomSnapshots === true
         };
       }
     }),
@@ -306,7 +311,8 @@ export function xlogViteClientPlugin(options = {}) {
       return createRuntimeDefines({
         serverUrl: options.serverUrl,
         projectName: options.projectName || path.basename(root),
-        tool: options.tool || "vite"
+        tool: options.tool || "vite",
+        debugDomSnapshots: options.debugDomSnapshots === true
       });
     },
     configResolved(config) {

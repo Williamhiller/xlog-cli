@@ -4,7 +4,7 @@ import {
   DEFAULT_PORT,
   INTERNAL_STACK_HINTS
 } from "../shared/constants.js";
-import { serializeArgs, serializeValue, argsToText } from "../shared/serialize.js";
+import { serializeArgs, serializeValue, argsToText, isDomElement } from "../shared/serialize.js";
 import { captureStack, resolveCallsite } from "../shared/stack.js";
 import { isToolingNoise } from "../shared/noise.js";
 
@@ -85,6 +85,29 @@ function byteLength(value) {
   return String(value).length;
 }
 
+function normalizeBooleanSetting(value, fallback = undefined) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function getGlobalConfig(name) {
   return typeof globalThis[name] !== "undefined" ? globalThis[name] : undefined;
 }
@@ -107,6 +130,10 @@ function getInjectedConfig(name) {
       return typeof __XLOG_SOURCE__ !== "undefined"
         ? __XLOG_SOURCE__
         : undefined;
+    case "__XLOG_DEBUG_DOM_SNAPSHOTS__":
+      return typeof __XLOG_DEBUG_DOM_SNAPSHOTS__ !== "undefined"
+        ? __XLOG_DEBUG_DOM_SNAPSHOTS__
+        : undefined;
     default:
       return undefined;
   }
@@ -114,6 +141,63 @@ function getInjectedConfig(name) {
 
 function getResolvedConfig(name) {
   return getInjectedConfig(name) ?? getGlobalConfig(name);
+}
+
+function getRemoteRuntimeConfig() {
+  const config = getGlobalConfig("__xlog_config__");
+  return config && typeof config === "object" ? config : null;
+}
+
+function hasDomValue(value, seen = new WeakSet(), depth = 0) {
+  if (isDomElement(value)) {
+    return true;
+  }
+
+  if (!value || typeof value !== "object" || depth >= 2) {
+    return false;
+  }
+
+  if (seen.has(value)) {
+    return false;
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasDomValue(item, seen, depth + 1));
+  }
+
+  for (const key of Object.keys(value).slice(0, 8)) {
+    const result = readProperty(value, key);
+    if (result.ok && hasDomValue(result.value, seen, depth + 1)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function loadServerDebugDomSnapshots(serverUrl) {
+  if (typeof fetch !== "function" || !serverUrl) {
+    return Promise.resolve(undefined);
+  }
+
+  const endpoint = new URL("/api/health", serverUrl).toString();
+  return fetch(endpoint, {
+    method: "GET",
+    headers: {
+      accept: "application/json"
+    }
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        return undefined;
+      }
+
+      const payload = await response.json().catch(() => null);
+      return normalizeBooleanSetting(payload?.debugDomSnapshots, undefined);
+    })
+    .catch(() => undefined);
 }
 
 function hasRuntimeScope() {
@@ -487,6 +571,24 @@ function maybeAutoInstallFromConsole(meta) {
   return getInstalledState();
 }
 
+function formatConsoleMetaSuffix(meta) {
+  if (!meta || typeof meta !== "object" || !meta.file) {
+    return "";
+  }
+
+  const location = [meta.file, meta.line, meta.column].filter(Boolean).join(":");
+  return location ? `[${location}]` : "";
+}
+
+function withConsoleMetaSuffix(args, meta) {
+  const suffix = formatConsoleMetaSuffix(meta);
+  if (!suffix) {
+    return args;
+  }
+
+  return [...args, suffix];
+}
+
 export function xlogConsole(level, meta, ...args) {
   const state = getInstalledState() || maybeAutoInstallFromConsole(meta);
 
@@ -502,7 +604,7 @@ export function xlogConsole(level, meta, ...args) {
   }
 
   const fallback = console[level] || console.log;
-  return fallback.apply(console, args);
+  return fallback.apply(console, withConsoleMetaSuffix(args, meta));
 }
 
 function createNetworkRingBuffer() {
@@ -638,6 +740,14 @@ export function installXLog(options = {}) {
   }
 
   const startedAt = new Date().toISOString();
+  const remoteRuntimeConfig = getRemoteRuntimeConfig();
+  const explicitDebugDomSnapshots = normalizeBooleanSetting(options.debugDomSnapshots, undefined);
+  const injectedDebugDomSnapshots = normalizeBooleanSetting(
+    remoteRuntimeConfig?.debugDomSnapshots,
+    normalizeBooleanSetting(getResolvedConfig("__XLOG_DEBUG_DOM_SNAPSHOTS__"), undefined)
+  );
+  const debugDomSnapshots =
+    explicitDebugDomSnapshots ?? injectedDebugDomSnapshots ?? false;
   const state = {
     installed: true,
     startedAt,
@@ -663,6 +773,12 @@ export function installXLog(options = {}) {
     flushInterval: Number(options.flushInterval || 500),
     maxBatchSize: Number(options.maxBatchSize || 20),
     maxQueueSize: Number(options.maxQueueSize || MAX_QUEUE_SIZE),
+    debugDomSnapshots,
+    explicitDebugDomSnapshots,
+    injectedDebugDomSnapshots,
+    debugDomSnapshotsReady: explicitDebugDomSnapshots !== undefined || injectedDebugDomSnapshots !== undefined,
+    debugDomSnapshotsFetch: null,
+    captureGlobalConsole: options.captureGlobalConsole === true,
     originalConsole: {},
     queue: [],
     sequence: 0,
@@ -741,6 +857,10 @@ export function installXLog(options = {}) {
     if (state.loggingDisabled) {
       state.queue.length = 0;
       return;
+    }
+
+    if (state.debugDomSnapshotsFetch && !state.debugDomSnapshotsReady) {
+      await state.debugDomSnapshotsFetch;
     }
 
     if (!state.queue.length || state.flushing) {
@@ -828,7 +948,37 @@ export function installXLog(options = {}) {
   }) {
     if (echoConsole) {
       const original = state.originalConsole[method] || state.originalConsole[level] || console.log;
-      original.apply(console, args);
+      original.apply(console, withConsoleMetaSuffix(args, meta));
+    }
+
+    if (kind === "console" && !meta && !state.captureGlobalConsole) {
+      return null;
+    }
+
+    if (!state.debugDomSnapshotsReady && hasDomValue(args)) {
+      if (!state.debugDomSnapshotsFetch) {
+        state.debugDomSnapshotsFetch = loadServerDebugDomSnapshots(state.serverUrl).then((value) => {
+          if (typeof value === "boolean") {
+            state.debugDomSnapshots = value;
+          }
+          state.debugDomSnapshotsReady = true;
+          return state.debugDomSnapshots;
+        });
+      }
+
+      const followUp = {
+        level,
+        method,
+        kind,
+        args,
+        meta,
+        echoConsole: false,
+        extra
+      };
+      void state.debugDomSnapshotsFetch.then(() => {
+        captureEntry(followUp);
+      });
+      return null;
     }
 
     const stack = captureStack(INTERNAL_STACK_HINTS);
@@ -855,8 +1005,12 @@ export function installXLog(options = {}) {
       occurredAtMs: timestamp.ms,
       receivedAt: timestamp.iso,
       receivedAtMs: timestamp.ms,
-      args: serializeArgs(args),
-      text: argsToText(args),
+      args: serializeArgs(args, {
+        debugDomSnapshots: state.debugDomSnapshots
+      }),
+      text: argsToText(args, {
+        debugDomSnapshots: state.debugDomSnapshots
+      }),
       callsite,
       stack: persistedStack,
       tags: ["browser", state.source && `source:${state.source}`, kind, method].filter(Boolean),
