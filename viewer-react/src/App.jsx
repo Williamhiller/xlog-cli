@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DetailDrawer from "./components/DetailDrawer.jsx";
 import { Icon } from "./icons.jsx";
 import { showToast } from "./toast.js";
+import { collapseRepeatedLogs } from "../../src/shared/repeated-logs.js";
 
 const DEFAULT_LOG_LIMIT = 600;
 const UI_STORAGE_KEY = "xlog.viewer.ui";
@@ -42,15 +43,15 @@ function formatDateTime(value) {
 function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return value || "--:--:--.000";
+    return value || "--:--";
   }
 
-  return `${date.toLocaleTimeString([], {
+  return date.toLocaleTimeString([], {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
-  })}.${padMilliseconds(date.getMilliseconds())}`;
+  });
 }
 
 function formatClockTime(value) {
@@ -126,13 +127,25 @@ function formatSource(log) {
   return [displayFile, log.callsite.line, log.callsite.column].filter(Boolean).join(":");
 }
 
+function formatListSource(log) {
+  const source = formatSource(log);
+  if (source === "unknown source") {
+    return source;
+  }
+
+  return source;
+}
+
 function getCallsiteSource(log) {
   return log?.callsite?.source || "none";
 }
 
 function getRuntimeSource(log) {
-  if (log?.source) {
-    return log.source;
+  const explicitSource = String(log?.source || "").toLowerCase();
+  const knownSources = ["background", "page", "popup", "sidepanel", "options", "dashboard", "content", "worker"];
+
+  if (knownSources.includes(explicitSource)) {
+    return explicitSource;
   }
 
   const pageUrl = String(log?.page?.url || "").toLowerCase();
@@ -295,6 +308,15 @@ function buildContextLines(log) {
     `session: ${log?.session?.id || "unknown"}`,
     `page: ${log?.page?.url || "unknown"}`
   ];
+}
+
+function getConsoleTypeLabel(log) {
+  const kind = String(log?.kind || "console");
+  if (kind !== "console") {
+    return kind;
+  }
+
+  return String(log?.method || log?.level || "log").toLowerCase();
 }
 
 function truncateText(value, maxLength = 160) {
@@ -493,6 +515,10 @@ function getMessageParts(log) {
   };
 }
 
+function getConsoleArgsText(parts) {
+  return [parts?.headline, parts?.tail].filter(Boolean).join(" ").trim() || "(empty)";
+}
+
 function getMessagePreviewText(parts) {
   return [parts?.headline, parts?.tail].filter(Boolean).join(" ").trim();
 }
@@ -504,19 +530,19 @@ function isExpandableLog(log, parts) {
     return false;
   }
 
-  if (preview.length > 240) {
-    return true;
-  }
-
   if (/[\r\n]/.test(preview)) {
     return true;
   }
 
-  if ((log?.level === "error" || log?.kind === "unhandledrejection") && preview.length > 140) {
+  if (preview.length > 220) {
     return true;
   }
 
-  return /\bat\s+\S+|\bhttps?:\/\/|\bError:/.test(preview) && preview.length > 120;
+  if ((log?.level === "error" || log?.kind === "unhandledrejection") && preview.length > 180) {
+    return true;
+  }
+
+  return /\bat\s+\S+|\bhttps?:\/\/|\bError:/.test(preview) && preview.length > 180;
 }
 
 function getLevelIconName(level) {
@@ -953,11 +979,13 @@ export default function App({ initialThemeMode }) {
     };
   }, [filters.level, filters.kind, filters.file, debouncedQuery, selectedCaptureId]);
 
-  const visibleLogs = logs;
+  const visibleLogs = useMemo(() => collapseRepeatedLogs(logs), [logs]);
   const expandedLogIdSet = expandedLogIds;
   const selectedLog = visibleLogs.find((log) => log.id === selectedLogId) || null;
   const detailVisible = ui.detailOpen && Boolean(selectedLog);
-  const logCountLabel = `${visibleLogs.length} ${visibleLogs.length === 1 ? "entry" : "entries"}`;
+  const logCountLabel = logs.length === visibleLogs.length
+    ? `${visibleLogs.length} ${visibleLogs.length === 1 ? "entry" : "entries"}`
+    : `${visibleLogs.length} shown · ${logs.length} raw`;
   const activeQuickFilter = getQuickFilterKey(filters);
 
   useEffect(() => {
@@ -1436,80 +1464,64 @@ export default function App({ initialThemeMode }) {
 	                      <div className="viewer-console-list">
                         {visibleLogs.map((log) => {
                           const parts = getMessageParts(log);
-                          const sourceLabel = getCallsiteSourceLabel(log);
+                          const argsText = getConsoleArgsText(parts);
+                          const source = formatListSource(log);
                           const runtimeSourceLabel = getRuntimeSourceLabel(log);
-                          const source = formatSource(log);
-                          const expandable = isExpandableLog(log, parts);
+                          const typeLabel = getConsoleTypeLabel(log);
+                          const repeatCount = Number(log.repeatCount || 1);
+                          const expandable = isExpandableLog(log, parts) || repeatCount > 1;
                           const expanded = expandedLogIdSet.has(log.id);
                           return (
                             <div
                               key={log.id}
                               className={`viewer-console-row is-${log.level} ${selectedLog?.id === log.id ? "is-selected" : ""}`}
                             >
-                              <div className="viewer-console-leading">
-                                <span className="viewer-console-icon"><Icon name={getLevelIconName(log.level)} /></span>
-                              </div>
-
                               <div className="viewer-console-body">
-                                {expandable ? (
+                                <div className={`viewer-console-mainline ${expandable ? "is-expandable" : ""}`}>
+                                  <span className="viewer-console-icon"><Icon name={getLevelIconName(log.level)} /></span>
+                                  <span className="viewer-console-type">{typeLabel}</span>
+                                  {expandable ? (
+                                    <button
+                                      type="button"
+                                      className={`viewer-console-disclosure-button ${expanded ? "is-expanded" : ""}`}
+                                      onClick={() => toggleLogExpanded(log.id)}
+                                      aria-expanded={expanded}
+                                      aria-label={expanded ? "Collapse log" : "Expand log"}
+                                      title={expanded ? "Collapse log" : "Expand log"}
+                                    >
+                                      <Icon name={expanded ? "ri-arrow-down-s-line" : "ri-arrow-right-s-line"} />
+                                    </button>
+                                  ) : null}
+                                  {repeatCount > 1 ? (
+                                    <span className="viewer-console-repeat">× {repeatCount}</span>
+                                  ) : null}
                                   <button
                                     type="button"
-                                    className={`viewer-console-message-toggle ${expanded ? "is-expanded" : ""}`}
-                                    onClick={() => toggleLogExpanded(log.id)}
-                                    aria-expanded={expanded}
+                                    className={`viewer-console-message-button ${expanded ? "is-expanded" : ""}`}
+                                    onClick={() => openLogDetails(log.id)}
+                                    aria-label="View log details"
+                                    title="View log details"
                                   >
-                                    <div
-                                      className={`viewer-console-message-row ${expanded ? "is-expanded" : "is-collapsed"}`}
+                                    <span
+                                      className={`viewer-console-message ${expanded || !expandable ? "is-expanded" : "is-collapsed"}`}
                                     >
-                                      <span className="viewer-console-message">{parts.headline}</span>
-                                      {parts.tail ? (
-                                        <span className="viewer-console-args">{parts.tail}</span>
-                                      ) : null}
-                                    </div>
-                                    <span className="viewer-console-expand-hint">
-                                      <i
-                                        
-                                        aria-hidden="true"
-                                      />
-                                      {expanded ? "Collapse" : "Expand"}
+                                      {argsText}
                                     </span>
                                   </button>
-                                ) : (
-                                  <div className="viewer-console-message-block">
-                                    <div className="viewer-console-message-row">
-                                      <span className="viewer-console-message">{parts.headline}</span>
-                                      {parts.tail ? (
-                                        <span className="viewer-console-args">{parts.tail}</span>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                )}
+                                </div>
 
                                 <div className="viewer-console-subline">
-                                  <span>{log.kind || "console"}</span>
+                                  <span>{formatTime(log.occurredAtMs || log.occurredAt)}</span>
                                   <span>{runtimeSourceLabel}</span>
-                                  <span>{sourceLabel}</span>
-                                  <span>{log.session?.id || "global"}</span>
-                                  <span>{log.callsite?.functionName || "anonymous"}</span>
-                                </div>
-                              </div>
-
-                              <div className="viewer-console-side">
-                                <div className="viewer-console-meta">
-                                  <span className="viewer-console-time">{formatTime(log.occurredAtMs || log.occurredAt)}</span>
-                                  <span className="viewer-console-file" title={source}>
+                                  <span className="viewer-console-location" title={source}>
                                     {source}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="viewer-console-detail-button"
-                                  onClick={() => openLogDetails(log.id)}
-                                  aria-label="View details"
-                                  title="View details"
-                                >
-                                  <Icon name="ri-eye-line" />
-                                </button>
+                                {expanded && repeatCount > 1 ? (
+                                  <div className="viewer-console-repeat-context">
+                                    Repeated {repeatCount} times from {formatTime(log.firstOccurredAtMs || log.firstOccurredAt)} to {formatTime(log.lastOccurredAtMs || log.lastOccurredAt)}
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           );

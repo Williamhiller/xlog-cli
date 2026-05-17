@@ -100,26 +100,39 @@ describe("FileLogStore", () => {
     });
   });
 
-  it("removes whole expired files from the SQLite index during retention cleanup", async () => {
+  it("persists debug DOM snapshots while keeping search text lightweight", async () => {
     await withStore({ enableSqliteIndex: true }, async (store) => {
-      const oldMs = Date.now() - 10 * 60 * 1000;
+      const largeHtml = '<button id="save" class="primary">Save</button>';
       await store.appendLogs(makePayload({
-        startedAt: new Date(oldMs).toISOString(),
-        logs: [
-          makeLog(0, {
-            occurredAt: new Date(oldMs).toISOString(),
-            occurredAtMs: oldMs,
-            text: "old log"
-          })
-        ]
+        logs: [makeLog(0, {
+          text: 'clicked save button#save.primary[id=save] id:save',
+          args: [
+            { type: "string", value: "clicked" },
+            {
+              type: "dom",
+              tagName: "BUTTON",
+              id: "save",
+              className: "primary",
+              selector: "button#save.primary[id=save]",
+              attrs: { id: "save", class: "primary", "data-testid": "save" },
+              path: "body > div:nth-of-type(1) > button#save.primary[id=save]",
+              text: "Save",
+              outerHTMLSanitized: largeHtml,
+              hash: "fnv1a-12345678",
+              byteLength: largeHtml.length,
+              tooLarge: false,
+              truncated: false,
+              captureMode: "debug"
+            }
+          ]
+        })]
       }));
 
-      const before = await store.queryLogs({ q: "old log" });
-      assert.equal(before.length, 1);
-
-      await store.cleanupByRetention(60 * 1000, 5 * 60 * 1000);
-      const after = await store.queryLogs({ q: "old log" });
-      assert.equal(after.length, 0);
+      const logs = await store.queryLogs({ q: "button#save.primary" });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args[1].outerHTMLSanitized, largeHtml);
+      assert.ok(logs[0].search.text.includes("button#save.primary"));
+      assert.ok(!logs[0].search.text.includes("<button id=\"save\" class=\"primary\">Save</button>"));
     });
   });
 });

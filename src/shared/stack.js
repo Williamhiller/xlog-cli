@@ -4,6 +4,20 @@ const CHROME_STACK_RE = /^\s*at (?:(.*?)\s+\()?(.+):(\d+):(\d+)\)?$/;
 const FIREFOX_STACK_RE = /^(.*?)@(.*):(\d+):(\d+)$/;
 const MAX_CAPTURED_FRAMES = 12;
 
+const CAPTURE_WRAPPER_FUNCTIONS = new Set(["captureStack", "captureEntry"]);
+const TOOLING_WRAPPER_FUNCTIONS = new Set([
+  "__webpack_require__",
+  "printWarning",
+  "checkPropTypes",
+  "warningWithoutStack"
+]);
+
+const TOOLING_WRAPPER_PATTERNS = [
+  "console.<computed>",
+  "createUnionTypeChecker",
+  "ReactDebugCurrentFrame"
+];
+
 function normalizeUrl(url) {
   if (!url) {
     return null;
@@ -49,6 +63,16 @@ export function compactFilePath(filePath) {
 function shouldSkipFrame(frame, skipPatterns) {
   const haystack = `${frame.functionName || ""} ${frame.url || ""}`.toLowerCase();
   return skipPatterns.some((pattern) => haystack.includes(pattern.toLowerCase()));
+}
+
+function isKnownWrapperFrame(frame) {
+  const functionName = String(frame.functionName || "");
+
+  if (CAPTURE_WRAPPER_FUNCTIONS.has(functionName) || TOOLING_WRAPPER_FUNCTIONS.has(functionName)) {
+    return true;
+  }
+
+  return TOOLING_WRAPPER_PATTERNS.some((pattern) => functionName.includes(pattern));
 }
 
 function createFrame(functionName, url, line, column) {
@@ -98,6 +122,14 @@ function stringifyFrames(frames, truncatedCount = 0) {
   return lines.join("\n");
 }
 
+function getModuleFileFromFrame(frame) {
+  const functionName = String(frame?.functionName || "");
+  const normalized = functionName.replace(/\\/g, "/");
+  const match = normalized.match(/(?:^|\s)(?:\.\/)?((?:src|app|pages|components|packages)\/[^\s)]+)/);
+
+  return match ? compactFilePath(match[1]) : null;
+}
+
 export function parseStack(rawStack, skipPatterns = INTERNAL_STACK_HINTS) {
   const lines = String(rawStack || "")
     .split(/\r?\n/)
@@ -111,7 +143,7 @@ export function parseStack(rawStack, skipPatterns = INTERNAL_STACK_HINTS) {
       continue;
     }
 
-    if (shouldSkipFrame(frame, skipPatterns)) {
+    if (shouldSkipFrame(frame, skipPatterns) || isKnownWrapperFrame(frame)) {
       continue;
     }
 
@@ -152,9 +184,11 @@ export function resolveCallsite(meta, stack) {
     return null;
   }
 
+  const moduleFile = getModuleFileFromFrame(frame);
+
   return {
-    source: "stack",
-    file: frame.file,
+    source: moduleFile ? "stack-module" : "stack",
+    file: moduleFile || frame.file,
     line: frame.line,
     column: frame.column,
     functionName: frame.functionName,

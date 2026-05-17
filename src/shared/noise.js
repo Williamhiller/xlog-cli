@@ -10,7 +10,16 @@ export const TOOLING_NOISE_PATTERNS = [
   "hot updated"
 ];
 
+const LOW_SIGNAL_LOG_PATTERNS = [
+  /\[crawl\]\s+isdegraded\s+false\b/i
+];
+
 export function isToolingNoise(log) {
+  const level = String(log?.level || "").toLowerCase();
+  if (level === "error" || level === "warn") {
+    return false;
+  }
+
   const haystack = [
     log?.text || "",
     log?.callsite?.file || "",
@@ -21,5 +30,8 @@ export function isToolingNoise(log) {
     .join(" ")
     .toLowerCase();
 
-  return TOOLING_NOISE_PATTERNS.some((pattern) => haystack.includes(pattern));
+  return (
+    TOOLING_NOISE_PATTERNS.some((pattern) => haystack.includes(pattern)) ||
+    LOW_SIGNAL_LOG_PATTERNS.some((pattern) => pattern.test(haystack))
+  );
 }

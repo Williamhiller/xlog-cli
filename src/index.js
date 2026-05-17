@@ -8,6 +8,8 @@ export {
   scoreLog,
   isToolingNoise,
   compactShareLog,
+  compactAiLog,
+  compactAiLogs,
   PROFILES
 } from "./server/share.js";
 export {
