@@ -7,6 +7,7 @@ import {
 import { serializeArgs, serializeValue, argsToText, isDomElement } from "../shared/serialize.js";
 import { captureStack, resolveCallsite } from "../shared/stack.js";
 import { isToolingNoise } from "../shared/noise.js";
+import { createPerformanceMonitor, collectCurrentMetrics, formatMetricsForLogging } from "../shared/performance.js";
 
 const GLOBAL_KEY = "__xlog_state__";
 const KEEPALIVE_BODY_LIMIT = 60 * 1024;
@@ -789,10 +790,53 @@ export function installXLog(options = {}) {
     loggingDisabledAt: null,
     retryCount: 0,
     retryTimer: null,
-    networkFailures: createNetworkRingBuffer()
+    networkFailures: createNetworkRingBuffer(),
+    performanceMonitor: null,
+    performanceMetrics: {
+      enabled: options.performanceMonitoring !== false,
+      sampleInterval: options.performanceSampleInterval || 5000,
+      maxSamples: options.performanceMaxSamples || 100
+    }
   };
 
   state.captureReady = resolveSharedCapture(state);
+
+  // Initialize performance monitoring
+  if (state.performanceMetrics.enabled) {
+    state.performanceMonitor = createPerformanceMonitor({
+      enabled: true,
+      sampleInterval: state.performanceMetrics.sampleInterval,
+      maxSamples: state.performanceMetrics.maxSamples,
+      onMetric: (type, data) => {
+        // Log performance metrics as debug logs
+        if (type === 'network' && data.duration > 1000) {
+          captureEntry({
+            level: 'debug',
+            method: 'debug',
+            kind: 'performance',
+            args: [`Slow network request: ${data.name} (${data.duration.toFixed(1)}ms)`],
+            extra: {
+              performanceType: type,
+              metric: data
+            }
+          });
+        }
+      },
+      onWarning: (type, data) => {
+        // Log performance warnings as warn logs
+        captureEntry({
+          level: 'warn',
+          method: 'warn',
+          kind: 'performance',
+          args: [`Performance warning: ${data.message}`],
+          extra: {
+            performanceType: type,
+            warning: data
+          }
+        });
+      }
+    });
+  }
 
   // Intercept network requests to correlate with errors
   interceptFetch(state);
@@ -1149,6 +1193,12 @@ export function installXLog(options = {}) {
         }
       }
 
+      // Stop performance monitoring
+      if (state.performanceMonitor) {
+        state.performanceMonitor.stopMonitoring();
+        state.performanceMonitor = null;
+      }
+
       setInstalledState(null);
     },
     getState() {
@@ -1163,8 +1213,40 @@ export function installXLog(options = {}) {
         loggingDisabled: state.loggingDisabled,
         loggingDisabledAt: state.loggingDisabledAt,
         retryCount: state.retryCount,
-        recentNetworkFailures: state.networkFailures ? state.networkFailures.getRecentFailures().length : 0
+        recentNetworkFailures: state.networkFailures ? state.networkFailures.getRecentFailures().length : 0,
+        performanceMonitoring: state.performanceMetrics.enabled,
+        performanceMonitor: state.performanceMonitor ? state.performanceMonitor.getMetrics() : null
       };
+    },
+    getPerformanceMetrics() {
+      if (!state.performanceMonitor) {
+        return null;
+      }
+      return state.performanceMonitor.getMetrics();
+    },
+    getMemoryUsage() {
+      if (!state.performanceMonitor) {
+        return null;
+      }
+      return state.performanceMonitor.getMemoryUsage();
+    },
+    getNetworkStats() {
+      if (!state.performanceMonitor) {
+        return null;
+      }
+      return state.performanceMonitor.getNetworkStats();
+    },
+    getTimingStats() {
+      if (!state.performanceMonitor) {
+        return null;
+      }
+      return state.performanceMonitor.getTimingStats();
+    },
+    collectCurrentMetrics() {
+      return collectCurrentMetrics();
+    },
+    formatMetricsForLogging(metrics) {
+      return formatMetricsForLogging(metrics);
     }
   };
 

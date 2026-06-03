@@ -1,3 +1,5 @@
+import { createCachedSerializer, createMonitoredSerializer } from "./serialization-cache.js";
+
 const MAX_DEPTH = 4;
 const MAX_ITEMS = 24;
 const MAX_TEXT_LENGTH = 6000;
@@ -27,6 +29,18 @@ const DOM_URL_ATTRS = new Set(["href", "src"]);
 const DOM_BOOLEAN_ATTRS = new Set(["checked", "selected", "disabled"]);
 const DOM_FORM_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "OPTION"]);
 const DOM_SENSITIVE_ATTR_RE = /(token|auth|secret|passw(?:or)?d|cookie|session|credential|api[-_]?key|key)/i;
+
+// Serialization cache configuration
+const SERIALIZATION_CACHE_ENABLED = true;
+const SERIALIZATION_CACHE_SIZE = 1000;
+const SERIALIZATION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Create serialization cache instance
+const serializationCache = createCachedSerializer(serializeValueInternal, {
+  enabled: SERIALIZATION_CACHE_ENABLED,
+  maxSize: SERIALIZATION_CACHE_SIZE,
+  ttlMs: SERIALIZATION_CACHE_TTL_MS
+});
 
 function isObjectLike(value) {
   return value !== null && typeof value === "object";
@@ -598,7 +612,7 @@ function serializeEntries(entries, depth, seen, options) {
   };
 }
 
-export function serializeValue(value, depth = 0, seen = new WeakSet(), options = {}) {
+function serializeValueInternal(value, depth = 0, seen = new WeakSet(), options = {}) {
   if (value === null) {
     return { type: "null", value: null };
   }
@@ -687,7 +701,7 @@ export function serializeValue(value, depth = 0, seen = new WeakSet(), options =
     return {
       type: "array",
       length: value.length,
-      items: value.slice(0, MAX_ITEMS).map((item) => serializeValue(item, depth + 1, seen, options)),
+      items: value.slice(0, MAX_ITEMS).map((item) => serializeValueInternal(item, depth + 1, seen, options)),
       truncated: value.length > MAX_ITEMS
     };
   }
@@ -708,7 +722,7 @@ export function serializeValue(value, depth = 0, seen = new WeakSet(), options =
       size: value.size,
       values: Array.from(value.values())
         .slice(0, MAX_ITEMS)
-        .map((item) => serializeValue(item, depth + 1, seen, options)),
+        .map((item) => serializeValueInternal(item, depth + 1, seen, options)),
       truncated: value.size > MAX_ITEMS
     };
   }
@@ -737,7 +751,7 @@ export function serializeValue(value, depth = 0, seen = new WeakSet(), options =
     return {
       key,
       value: result.ok
-        ? serializeValue(result.value, depth + 1, seen, options)
+        ? serializeValueInternal(result.value, depth + 1, seen, options)
         : {
             type: "thrown",
             value: truncateText(String(result.error))
@@ -751,6 +765,11 @@ export function serializeValue(value, depth = 0, seen = new WeakSet(), options =
     entries,
     truncated: keys.length > MAX_ITEMS
   };
+}
+
+export function serializeValue(value, depth = 0, seen = new WeakSet(), options = {}) {
+  // Use cached serialization for better performance
+  return serializationCache(value, depth, seen, options);
 }
 
 export function stringifyForSearch(value, depth = 0, seen = new WeakSet(), options = {}) {

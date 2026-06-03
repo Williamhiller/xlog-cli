@@ -1,11 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
 import { FileLogStore } from "../server/storage.js";
+import { HttpLogStore } from "./http-client.js";
 import { buildCaptureSharePayload, compactAiLogs, scoreLog } from "../server/share.js";
 import { groupRecordsIntoCaptures } from "../server/captures.js";
 import { DEFAULT_DATA_DIR } from "../shared/constants.js";
 import { createXLogServer } from "../server/server.js";
 import { collapseRepeatedLogs } from "../shared/repeated-logs.js";
+import { createLogAnalyzer, analyzeLogsForInsights, detectLogPatterns, detectLogAnomalies, analyzeLogTrends, generateLogRecommendations } from "./log-analyzer.js";
 
 // ── Defaults ───────────────────────────────────────────────────────
 
@@ -18,15 +20,25 @@ const ERROR_RETENTION_MS = 60 * 60 * 1000;         // 1 hour for error-level log
 export function createXLogMcpServer(options = {}) {
   const projectRoot = options.root || process.cwd();
   const dataDir = options.dataDir || DEFAULT_DATA_DIR;
-  const startHttpServer = options.startHttpServer !== false;
+  const serverUrl = options.serverUrl || null;
 
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
   const captureDurationMs = options.captureDurationMs ?? DEFAULT_CAPTURE_DURATION_MS;
   const captureGapMs = options.captureGapMs ?? DEFAULT_CAPTURE_GAP_MS;
   const debugDomSnapshots = options.debugDomSnapshots === true;
 
-  const store = new FileLogStore({ projectRoot, dataDir });
+  // 根据是否提供 serverUrl 决定使用哪种存储
+  // - 如果提供了 serverUrl，使用 HttpLogStore 连接到远程服务器
+  // - 否则使用本地 FileLogStore
+  const store = serverUrl
+    ? new HttpLogStore(serverUrl)
+    : new FileLogStore({ projectRoot, dataDir });
+
   const server = new McpServer({ name: "xlog-mcp", version: "0.6.0" });
+
+  // 如果使用 HTTP 客户端，不启动本地 HTTP 服务器
+  // 如果是主实例（没有 serverUrl），根据配置决定是否启动 HTTP 服务器
+  const startHttpServer = options.startHttpServer !== false && !serverUrl;
   const httpServerReady = startHttpServer
     ? createXLogServer({
         projectRoot,
@@ -578,6 +590,240 @@ export function createXLogMcpServer(options = {}) {
     }
   );
 
+  // ── Tool 6: xlog_insights ─────────────────────────────────────────
+
+  server.registerTool(
+    "xlog_insights",
+    {
+      description:
+        "Generate AI-powered insights from browser logs. " +
+        "Analyzes patterns, detects anomalies, and provides recommendations for debugging.",
+      inputSchema: z.object({
+        level: z.string().optional().describe("Filter by log level, comma-separated"),
+        file: z.string().optional().describe("Filter by source file path"),
+        q: z.string().optional().describe("Full-text search"),
+        from: z.string().optional().describe("Start of time range (ISO 8601)"),
+        to: z.string().optional().describe("End of time range (ISO 8601)"),
+        project: z.string().optional().describe("Filter by project name"),
+        limit: z.number().optional().describe("Max logs to analyze (default: 200)")
+      })
+    },
+    async (params) => {
+      try {
+        const limit = params.limit ?? 200;
+        const from = params.from || new Date(Date.now() - retentionMs).toISOString();
+
+        const logs = await store.queryLogs({
+          project: params.project || "",
+          level: params.level || "",
+          file: params.file || "",
+          q: params.q || "",
+          from,
+          to: params.to || "",
+          limit: String(limit)
+        });
+
+        if (!logs.length) {
+          return ok({
+            total: 0,
+            insights: [],
+            message: "没有找到匹配的日志。"
+          });
+        }
+
+        // Generate insights
+        const insights = analyzeLogsForInsights(logs);
+        const patterns = detectLogPatterns(logs);
+        const anomalies = detectLogAnomalies(logs);
+        const trends = analyzeLogTrends(logs);
+        const recommendations = generateLogRecommendations(logs);
+
+        return ok({
+          total: logs.length,
+          insights,
+          patterns: patterns.slice(0, 10),
+          anomalies: anomalies.slice(0, 10),
+          trends,
+          recommendations: recommendations.slice(0, 10),
+          summary: {
+            errorCount: logs.filter(l => l.level === 'error').length,
+            warningCount: logs.filter(l => l.level === 'warn').length,
+            patternCount: patterns.length,
+            anomalyCount: anomalies.length,
+            recommendationCount: recommendations.length
+          }
+        });
+      } catch (err) {
+        return error(err.message);
+      }
+    }
+  );
+
+  // ── Tool 7: xlog_patterns ─────────────────────────────────────────
+
+  server.registerTool(
+    "xlog_patterns",
+    {
+      description:
+        "Detect patterns in browser logs. " +
+        "Identifies error bursts, repeated errors, and other recurring patterns.",
+      inputSchema: z.object({
+        level: z.string().optional().describe("Filter by log level"),
+        from: z.string().optional().describe("Start of time range (ISO 8601)"),
+        to: z.string().optional().describe("End of time range (ISO 8601)"),
+        project: z.string().optional().describe("Filter by project name"),
+        limit: z.number().optional().describe("Max logs to analyze (default: 500)")
+      })
+    },
+    async (params) => {
+      try {
+        const limit = params.limit ?? 500;
+        const from = params.from || new Date(Date.now() - retentionMs).toISOString();
+
+        const logs = await store.queryLogs({
+          project: params.project || "",
+          level: params.level || "",
+          from,
+          to: params.to || "",
+          limit: String(limit)
+        });
+
+        if (!logs.length) {
+          return ok({
+            total: 0,
+            patterns: [],
+            message: "没有找到匹配的日志。"
+          });
+        }
+
+        const patterns = detectLogPatterns(logs);
+
+        return ok({
+          total: logs.length,
+          patterns,
+          summary: {
+            errorBursts: patterns.filter(p => p.type === 'error_burst').length,
+            repeatedErrors: patterns.filter(p => p.type === 'repeated_error').length,
+            networkFailures: patterns.filter(p => p.type === 'network_failures').length,
+            consoleErrors: patterns.filter(p => p.type === 'console_errors').length
+          }
+        });
+      } catch (err) {
+        return error(err.message);
+      }
+    }
+  );
+
+  // ── Tool 8: xlog_anomalies ────────────────────────────────────────
+
+  server.registerTool(
+    "xlog_anomalies",
+    {
+      description:
+        "Detect anomalies in browser logs. " +
+        "Identifies unusual patterns, spikes, and deviations from normal behavior.",
+      inputSchema: z.object({
+        level: z.string().optional().describe("Filter by log level"),
+        from: z.string().optional().describe("Start of time range (ISO 8601)"),
+        to: z.string().optional().describe("End of time range (ISO 8601)"),
+        project: z.string().optional().describe("Filter by project name"),
+        limit: z.number().optional().describe("Max logs to analyze (default: 500)")
+      })
+    },
+    async (params) => {
+      try {
+        const limit = params.limit ?? 500;
+        const from = params.from || new Date(Date.now() - retentionMs).toISOString();
+
+        const logs = await store.queryLogs({
+          project: params.project || "",
+          level: params.level || "",
+          from,
+          to: params.to || "",
+          limit: String(limit)
+        });
+
+        if (!logs.length) {
+          return ok({
+            total: 0,
+            anomalies: [],
+            message: "没有找到匹配的日志。"
+          });
+        }
+
+        const anomalies = detectLogAnomalies(logs);
+
+        return ok({
+          total: logs.length,
+          anomalies,
+          summary: {
+            highErrorRate: anomalies.filter(a => a.type === 'high_error_rate').length,
+            highLogVolume: anomalies.filter(a => a.type === 'high_log_volume').length,
+            errorTypeSpikes: anomalies.filter(a => a.type === 'error_type_spike').length,
+            severityHigh: anomalies.filter(a => a.severity === 'high').length,
+            severityMedium: anomalies.filter(a => a.severity === 'medium').length
+          }
+        });
+      } catch (err) {
+        return error(err.message);
+      }
+    }
+  );
+
+  // ── Tool 9: xlog_trends ───────────────────────────────────────────
+
+  server.registerTool(
+    "xlog_trends",
+    {
+      description:
+        "Analyze trends in browser logs. " +
+        "Identifies increasing/decreasing patterns in error rates and log volume.",
+      inputSchema: z.object({
+        level: z.string().optional().describe("Filter by log level"),
+        from: z.string().optional().describe("Start of time range (ISO 8601)"),
+        to: z.string().optional().describe("End of time range (ISO 8601)"),
+        project: z.string().optional().describe("Filter by project name"),
+        limit: z.number().optional().describe("Max logs to analyze (default: 1000)")
+      })
+    },
+    async (params) => {
+      try {
+        const limit = params.limit ?? 1000;
+        const from = params.from || new Date(Date.now() - retentionMs).toISOString();
+
+        const logs = await store.queryLogs({
+          project: params.project || "",
+          level: params.level || "",
+          from,
+          to: params.to || "",
+          limit: String(limit)
+        });
+
+        if (!logs.length) {
+          return ok({
+            total: 0,
+            trends: {},
+            message: "没有找到匹配的日志。"
+          });
+        }
+
+        const trends = analyzeLogTrends(logs);
+
+        return ok({
+          total: logs.length,
+          trends,
+          summary: {
+            errorRateDirection: trends.errorRate?.direction || 'stable',
+            logVolumeDirection: trends.logVolume?.direction || 'stable',
+            emergingPatterns: trends.emergingPatterns?.length || 0
+          }
+        });
+      } catch (err) {
+        return error(err.message);
+      }
+    }
+  );
+
   // ── Cleanup on close ──────────────────────────────────────────────
 
   const originalClose = store.close.bind(store);
@@ -593,7 +839,7 @@ export function createXLogMcpServer(options = {}) {
     await originalClose();
   };
 
-  return { server, store, httpServerReady };
+  return { server, store, httpServerReady, serverUrl };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createXLogServer } from "../server/server.js";
+import { discoverMcpServer } from "../mcp/single-instance.js";
 
 function prependEntry(entry, runtimeEntry) {
   if (!entry) {
@@ -79,16 +80,28 @@ export class XLogWebpackPlugin {
       if (this.options.serverUrl) {
         this.serverUrl = this.options.serverUrl;
       } else {
-        this.serverState = await createXLogServer({
-          projectRoot: this.options.projectRoot || compiler.context || process.cwd(),
-          projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
-          dataDir: this.options.dataDir,
-          host: this.options.host,
-          port: this.options.port,
-          allowFallbackPort: this.options.strictPort !== true,
-          silent: this.options.silent
-        });
-        this.serverUrl = this.serverState.serverUrl;
+        // 先尝试发现 MCP 管理的服务器
+        const projectRoot = this.options.projectRoot || compiler.context || process.cwd();
+        const mcpServerUrl = await discoverMcpServer(projectRoot).catch(() => null);
+
+        if (mcpServerUrl) {
+          // MCP 已启动，连接到 MCP 管理的服务器
+          this.serverUrl = mcpServerUrl;
+          this.serverState = null;
+          console.log(`[xlog] connected to MCP server at ${this.serverUrl}`);
+        } else {
+          // MCP 未启动，自己启动服务器
+          this.serverState = await createXLogServer({
+            projectRoot,
+            projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
+            dataDir: this.options.dataDir,
+            host: this.options.host,
+            port: this.options.port,
+            allowFallbackPort: this.options.strictPort !== true,
+            silent: this.options.silent
+          });
+          this.serverUrl = this.serverState.serverUrl;
+        }
       }
 
       this.releaseProcessCleanup?.();

@@ -10,6 +10,7 @@ import {
   hasBuiltReactViewer
 } from "./viewer.js";
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
+import { createRequestCache, createRateLimiter, createJsonParserCache } from "./request-cache.js";
 
 const SERVER_KEY = "__xlog_server_singleton__";
 
@@ -163,11 +164,36 @@ export async function createXLogServer(options = {}) {
   const store = new FileLogStore({ projectRoot, dataDir });
   const sseClients = new Set();
 
+  // Initialize caching and rate limiting
+  const requestCache = createRequestCache({
+    enabled: options.cache !== false,
+    maxSize: options.cacheSize || 100,
+    ttlMs: options.cacheTtlMs || 30 * 1000 // 30 seconds
+  });
+
+  const rateLimiter = createRateLimiter({
+    enabled: options.rateLimit !== false,
+    windowMs: options.rateLimitWindowMs || 60 * 1000, // 1 minute
+    maxRequests: options.rateLimitMaxRequests || 100
+  });
+
+  const jsonParser = createJsonParserCache({
+    enabled: options.jsonCache !== false,
+    maxSize: options.jsonCacheSize || 50,
+    ttlMs: options.jsonCacheTtlMs || 5 * 60 * 1000 // 5 minutes
+  });
+
   const ready = (async () => {
     const port = await resolvePort(preferredPort, host, options.allowFallbackPort !== false);
 
     const server = http.createServer(async (req, res) => {
       applyCors(res);
+
+      // Check rate limit
+      if (!rateLimiter.isAllowed(req)) {
+        writeJson(res, 429, { ok: false, error: "Too many requests" });
+        return;
+      }
 
       if (req.method === "OPTIONS") {
         res.writeHead(204);
@@ -217,14 +243,25 @@ export async function createXLogServer(options = {}) {
       }
 
       if (req.method === "GET" && url.pathname === "/api/health") {
+        // Check cache first
+        const cached = requestCache.get(url.pathname, req.method);
+        if (cached) {
+          writeJson(res, 200, cached);
+          return;
+        }
+
         const storage = await store.describeStorage();
-        writeJson(res, 200, {
+        const response = {
           ok: true,
           projectName,
           dataDir: path.resolve(projectRoot, dataDir),
           debugDomSnapshots,
           storage
-        });
+        };
+
+        // Cache response
+        requestCache.set(url.pathname, req.method, null, response);
+        writeJson(res, 200, response);
         return;
       }
 
@@ -251,19 +288,37 @@ export async function createXLogServer(options = {}) {
       }
 
       if (req.method === "GET" && url.pathname === "/api/sessions") {
+        // Check cache first
+        const cached = requestCache.get(url.pathname, req.method);
+        if (cached) {
+          writeJson(res, 200, cached);
+          return;
+        }
+
         const sessions = await store.listSessions({
           project: url.searchParams.get("project") || ""
         });
         const storage = await store.describeStorage();
 
-        writeJson(res, 200, {
+        const response = {
           sessions,
           storage
-        });
+        };
+
+        // Cache response
+        requestCache.set(url.pathname, req.method, null, response);
+        writeJson(res, 200, response);
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/api/captures") {
+        // Check cache first
+        const cached = requestCache.get(url.pathname, req.method);
+        if (cached) {
+          writeJson(res, 200, cached);
+          return;
+        }
+
         const captures = await store.listCaptures({
           project: url.searchParams.get("project") || ""
         });
@@ -339,6 +394,14 @@ export async function createXLogServer(options = {}) {
       }
 
       if (req.method === "GET" && (url.pathname === "/api/x-log" || url.pathname === "/api/logs")) {
+        // Check cache first
+        const cacheKey = `${url.pathname}?${url.searchParams.toString()}`;
+        const cached = requestCache.get(cacheKey, req.method);
+        if (cached) {
+          writeJson(res, 200, cached);
+          return;
+        }
+
         const logs = await store.queryLogs({
           project: url.searchParams.get("project") || "",
           captureId: url.searchParams.get("captureId") || "",
@@ -354,16 +417,22 @@ export async function createXLogServer(options = {}) {
         });
         const storage = await store.describeStorage();
 
-        writeJson(res, 200, {
+        const response = {
           logs,
           storage
-        });
+        };
+
+        // Cache response
+        requestCache.set(cacheKey, req.method, null, response);
+        writeJson(res, 200, response);
         return;
       }
 
       if (req.method === "POST" && (url.pathname === "/api/x-log" || url.pathname === "/api/logs")) {
         try {
-          const payload = await parseJsonBody(req);
+          // Parse JSON with cache
+          const body = await parseJsonBody(req);
+          const payload = jsonParser.parse(body);
           const result = await store.appendLogs(payload);
 
           if (result.records.length) {

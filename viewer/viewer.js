@@ -11,6 +11,9 @@ const DEFAULT_LOG_LIMIT = 600;
 const UI_STORAGE_KEY = "xlog.viewer.ui";
 const THEME_MEDIA = window.matchMedia("(prefers-color-scheme: dark)");
 
+// Import UI enhancements
+import { initUIEnhancements } from "./ui-enhancements.js";
+
 const state = {
   sessions: [],
   logs: [],
@@ -846,4 +849,54 @@ THEME_MEDIA.addEventListener("change", () => {
 
 void bootstrap().finally(() => {
   connectStream();
+
+  // Initialize UI enhancements
+  try {
+    const uiEnhancements = initUIEnhancements({
+      animationDuration: 200,
+      debounceDelay: 300
+    });
+
+    // Add keyboard shortcut help panel
+    const helpPanel = document.createElement('div');
+    helpPanel.id = 'help-panel';
+    helpPanel.className = 'panel';
+    helpPanel.hidden = true;
+    helpPanel.innerHTML = `
+      <div class="help-content">
+        <h3>Keyboard Shortcuts</h3>
+        <ul>
+          <li><kbd>Ctrl+K</kbd> - Focus search</li>
+          <li><kbd>Ctrl+/</kbd> - Toggle help</li>
+          <li><kbd>Escape</kbd> - Close panel</li>
+          <li><kbd>Ctrl+Shift+C</kbd> - Clear logs</li>
+          <li><kbd>Ctrl+Shift+R</kbd> - Refresh</li>
+        </ul>
+        <button id="close-help" class="btn">Close</button>
+      </div>
+    `;
+    document.body.appendChild(helpPanel);
+
+    // Add close button handler
+    document.getElementById('close-help')?.addEventListener('click', () => {
+      helpPanel.hidden = true;
+    });
+
+    // Add help button to toolbar
+    const toolbar = document.querySelector('.toolbar');
+    if (toolbar) {
+      const helpButton = document.createElement('button');
+      helpButton.className = 'btn';
+      helpButton.textContent = '?';
+      helpButton.title = 'Help (Ctrl+/)';
+      helpButton.addEventListener('click', () => {
+        helpPanel.hidden = !helpPanel.hidden;
+      });
+      toolbar.appendChild(helpButton);
+    }
+
+    console.log('[xlog] UI enhancements initialized');
+  } catch (error) {
+    console.warn('[xlog] Failed to initialize UI enhancements:', error);
+  }
 });

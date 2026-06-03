@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createXLogServer } from "../server/server.js";
+import { discoverMcpServer } from "../mcp/single-instance.js";
 
 const AUTO_SERVER_VIRTUAL_MODULE_ID = "virtual:xlog-client";
 const RESOLVED_AUTO_SERVER_VIRTUAL_MODULE_ID = `\0${AUTO_SERVER_VIRTUAL_MODULE_ID}`;
@@ -261,17 +262,29 @@ export function xlogVitePlugin(options = {}) {
     },
     async configResolved(config) {
       configRoot = config.root || process.cwd();
+
       if (!options.serverUrl) {
-        serverState = await createXLogServer({
-          projectRoot: options.projectRoot || configRoot,
-          projectName: options.projectName || path.basename(configRoot),
-          dataDir: options.dataDir,
-          host: options.host,
-          port: options.port,
-          allowFallbackPort: options.strictPort !== true,
-          silent: options.silent
-        });
-        serverUrl = serverState.serverUrl;
+        // 先尝试发现 MCP 管理的服务器
+        const mcpServerUrl = await discoverMcpServer(options.projectRoot || configRoot).catch(() => null);
+
+        if (mcpServerUrl) {
+          // MCP 已启动，连接到 MCP 管理的服务器
+          serverUrl = mcpServerUrl;
+          serverState = null;
+          console.log(`[xlog] connected to MCP server at ${serverUrl}`);
+        } else {
+          // MCP 未启动，Vite 插件自己启动服务器
+          serverState = await createXLogServer({
+            projectRoot: options.projectRoot || configRoot,
+            projectName: options.projectName || path.basename(configRoot),
+            dataDir: options.dataDir,
+            host: options.host,
+            port: options.port,
+            allowFallbackPort: options.strictPort !== true,
+            silent: options.silent
+          });
+          serverUrl = serverState.serverUrl;
+        }
       } else {
         serverUrl = options.serverUrl;
       }
