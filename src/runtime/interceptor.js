@@ -18,6 +18,7 @@ const NETWORK_FAILURE_WINDOW_MS = 5000;
 const MAX_RETRY_COUNT = 5;
 const RETRY_COOLDOWN_MS = 30000;
 const MAX_QUEUE_SIZE = 1000;
+const HEALTH_CHECK_INTERVAL_MS = 10000;
 
 function createId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -29,6 +30,17 @@ function createId() {
 
 function normalizeServerUrl(input) {
   return input || `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
+}
+
+function isXlogEndpoint(url, serverUrl) {
+  if (!url || !serverUrl) return false;
+  try {
+    const u = new URL(url, serverUrl);
+    const s = new URL(serverUrl);
+    return u.origin === s.origin && (u.pathname.startsWith("/api/x-log") || u.pathname.startsWith("/api/logs"));
+  } catch {
+    return false;
+  }
 }
 
 function normalizeProjectName(input) {
@@ -134,6 +146,10 @@ function getInjectedConfig(name) {
     case "__XLOG_DEBUG_DOM_SNAPSHOTS__":
       return typeof __XLOG_DEBUG_DOM_SNAPSHOTS__ !== "undefined"
         ? __XLOG_DEBUG_DOM_SNAPSHOTS__
+        : undefined;
+    case "__XLOG_INTERCEPT_METHODS__":
+      return typeof __XLOG_INTERCEPT_METHODS__ !== "undefined"
+        ? __XLOG_INTERCEPT_METHODS__
         : undefined;
     default:
       return undefined;
@@ -636,6 +652,12 @@ function interceptFetch(state) {
   globalThis.fetch = async (...args) => {
     const url = typeof args[0] === "string" ? args[0] : args[0]?.url || String(args[0]);
     const method = args[1]?.method || "GET";
+
+    // 跳过 xlog 自身的请求，避免反馈循环
+    if (isXlogEndpoint(url, state.serverUrl)) {
+      return originalFetch(...args);
+    }
+
     const startMs = Date.now();
 
     try {
@@ -749,6 +771,11 @@ export function installXLog(options = {}) {
   );
   const debugDomSnapshots =
     explicitDebugDomSnapshots ?? injectedDebugDomSnapshots ?? false;
+
+  // 解析 interceptMethods 配置
+  const injectedInterceptMethods = getResolvedConfig("__XLOG_INTERCEPT_METHODS__");
+  const interceptMethods = options.interceptMethods || injectedInterceptMethods || null;
+
   const state = {
     installed: true,
     startedAt,
@@ -780,6 +807,7 @@ export function installXLog(options = {}) {
     debugDomSnapshotsReady: explicitDebugDomSnapshots !== undefined || injectedDebugDomSnapshots !== undefined,
     debugDomSnapshotsFetch: null,
     captureGlobalConsole: options.captureGlobalConsole === true,
+    interceptMethods, // null = 拦截所有，数组 = 只拦截指定方法
     originalConsole: {},
     queue: [],
     sequence: 0,
@@ -790,6 +818,8 @@ export function installXLog(options = {}) {
     loggingDisabledAt: null,
     retryCount: 0,
     retryTimer: null,
+    serverReachable: true,
+    lastHealthCheckMs: 0,
     networkFailures: createNetworkRingBuffer(),
     performanceMonitor: null,
     performanceMetrics: {
@@ -850,6 +880,7 @@ export function installXLog(options = {}) {
 
   function handleFlushFailure(currentState, failedLogs = []) {
     currentState.retryCount += 1;
+    currentState.serverReachable = false;
 
     if (failedLogs.length) {
       currentState.queue.unshift(...failedLogs);
@@ -861,10 +892,13 @@ export function installXLog(options = {}) {
       return;
     }
 
-    // Disable temporarily, then re-enable after cooldown
+    // Disable temporarily, then re-enable after exponential backoff
     currentState.loggingDisabled = true;
     currentState.loggingDisabledAt = new Date().toISOString();
     trimQueue(currentState);
+
+    // 指数退避: 30s, 60s, 120s, 240s, ... 最大 5 分钟
+    const backoffMs = Math.min(RETRY_COOLDOWN_MS * Math.pow(2, currentState.retryCount - MAX_RETRY_COUNT), 5 * 60 * 1000);
 
     if (!currentState.retryTimer && typeof globalThis.setTimeout === "function") {
       currentState.retryTimer = globalThis.setTimeout(() => {
@@ -872,7 +906,24 @@ export function installXLog(options = {}) {
         currentState.loggingDisabled = false;
         currentState.loggingDisabledAt = null;
         currentState.retryCount = 0;
-      }, RETRY_COOLDOWN_MS);
+        currentState.serverReachable = true;
+      }, backoffMs);
+    }
+  }
+
+  async function checkServerReachable() {
+    if (typeof fetch !== "function") return false;
+    try {
+      const endpoint = new URL("/api/health", state.serverUrl).toString();
+      const fetchOptions = { method: "GET" };
+      // AbortSignal.timeout 不是所有环境都支持
+      if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+        fetchOptions.signal = AbortSignal.timeout(2000);
+      }
+      const res = await fetch(endpoint, fetchOptions);
+      return res.ok;
+    } catch {
+      return false;
     }
   }
 
@@ -911,6 +962,23 @@ export function installXLog(options = {}) {
       return;
     }
 
+    // 定期检查 server 是否可达（仅在上次不可达时）
+    if (!state.serverReachable) {
+      const now = Date.now();
+      if (now - state.lastHealthCheckMs > HEALTH_CHECK_INTERVAL_MS) {
+        state.lastHealthCheckMs = now;
+        state.serverReachable = await checkServerReachable();
+      }
+
+      if (!state.serverReachable) {
+        // Server 仍不可达，丢弃最老的日志避免内存无限增长
+        if (state.queue.length > state.maxBatchSize * 5) {
+          state.queue.splice(0, state.queue.length - state.maxBatchSize * 5);
+        }
+        return;
+      }
+    }
+
     state.flushing = true;
     await state.captureReady;
     await ensureCapture(state);
@@ -926,6 +994,9 @@ export function installXLog(options = {}) {
 
         if (!sent) {
           handleFlushFailure(state, logs);
+        } else {
+          state.serverReachable = true;
+          state.retryCount = 0;
         }
       } else {
         const canUseKeepalive =
@@ -946,6 +1017,7 @@ export function installXLog(options = {}) {
           handleFlushFailure(state, logs);
         } else {
           // Success — reset retry count
+          state.serverReachable = true;
           state.retryCount = 0;
         }
       }
@@ -954,8 +1026,15 @@ export function installXLog(options = {}) {
     } finally {
       state.flushing = false;
 
-      if (state.queue.length) {
-        scheduleFlush();
+      // 队列中还有数据，继续发送
+      if (state.queue.length && !state.loggingDisabled) {
+        if (state.queue.length >= state.maxBatchSize) {
+          // 积压较多，立即发送下一批
+          void flush();
+        } else {
+          // 少量剩余，等下一个 flush 周期
+          scheduleFlush();
+        }
       }
     }
   }
@@ -1071,7 +1150,12 @@ export function installXLog(options = {}) {
 
   state.captureEntry = captureEntry;
 
-  for (const method of CAPTURED_CONSOLE_METHODS) {
+  // 确定要拦截的 console 方法
+  const methodsToIntercept = state.interceptMethods
+    ? state.interceptMethods.filter(m => CAPTURED_CONSOLE_METHODS.includes(m))
+    : CAPTURED_CONSOLE_METHODS;
+
+  for (const method of methodsToIntercept) {
     if (typeof console[method] !== "function") {
       continue;
     }
@@ -1213,9 +1297,11 @@ export function installXLog(options = {}) {
         loggingDisabled: state.loggingDisabled,
         loggingDisabledAt: state.loggingDisabledAt,
         retryCount: state.retryCount,
+        serverReachable: state.serverReachable,
         recentNetworkFailures: state.networkFailures ? state.networkFailures.getRecentFailures().length : 0,
         performanceMonitoring: state.performanceMetrics.enabled,
-        performanceMonitor: state.performanceMonitor ? state.performanceMonitor.getMetrics() : null
+        performanceMonitor: state.performanceMonitor ? state.performanceMonitor.getMetrics() : null,
+        interceptMethods: state.interceptMethods
       };
     },
     getPerformanceMetrics() {

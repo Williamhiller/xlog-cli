@@ -12,16 +12,6 @@ import {
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
 import { createRequestCache, createRateLimiter, createJsonParserCache } from "./request-cache.js";
 
-const SERVER_KEY = "__xlog_server_singleton__";
-
-function getState() {
-  return globalThis[SERVER_KEY] || null;
-}
-
-function setState(value) {
-  globalThis[SERVER_KEY] = value;
-}
-
 function parseJsonBody(req, maxBytes = 4 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -134,7 +124,7 @@ async function portAvailable(port, host) {
   });
 }
 
-async function resolvePort(preferredPort, host, allowFallback = true) {
+async function resolvePort(preferredPort, host, allowFallback = false) {
   if (!allowFallback) {
     return preferredPort;
   }
@@ -150,11 +140,6 @@ async function resolvePort(preferredPort, host, allowFallback = true) {
 }
 
 export async function createXLogServer(options = {}) {
-  const existing = getState();
-  if (existing && existing.ready) {
-    return existing.ready;
-  }
-
   const host = options.host || DEFAULT_HOST;
   const preferredPort = Number(options.port || DEFAULT_PORT);
   const projectRoot = path.resolve(options.projectRoot || process.cwd());
@@ -350,6 +335,13 @@ export async function createXLogServer(options = {}) {
         });
         const storage = await store.describeStorage();
 
+        // 通知 viewer 刷新数据
+        broadcastSse(sseClients, createSseMessage({
+          type: "delete",
+          captureId,
+          deletedCount: deletion.deletedCount
+        }));
+
         writeJson(res, 200, {
           ok: true,
           captureId,
@@ -520,7 +512,6 @@ export async function createXLogServer(options = {}) {
             resolve();
           });
         });
-        delete globalThis[SERVER_KEY];
       }
     };
 
@@ -533,6 +524,5 @@ export async function createXLogServer(options = {}) {
     return state;
   })();
 
-  setState({ ready });
   return ready;
 }

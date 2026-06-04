@@ -48,7 +48,7 @@ function readBaseOptions(args) {
   const host = readOption(args, "--host", "127.0.0.1");
   const dataDir = readOption(args, "--data-dir", ".xlog");
   const projectName = readOption(args, "--project", path.basename(root));
-  const strictPort = hasFlag(args, "--strict-port");
+  const strictPort = !hasFlag(args, "--no-strict-port");
   const silent = hasFlag(args, "--silent");
   const debugDomSnapshots = hasFlag(args, "--debug-dom-snapshots") || readBooleanEnv("XLOG_DEBUG_DOM_SNAPSHOTS", false);
 
@@ -210,53 +210,11 @@ async function runBugpack(args, options) {
   }
 }
 
-function parseMs(value, fallback) {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-async function runMcp(args, options) {
-  const { createXLogMcpServer } = await import("../src/mcp/server.js");
-  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
-
-  const retentionMs = parseMs(readOption(args, "--retention", ""), 5 * 60 * 1000);
-  const captureDurationMs = parseMs(readOption(args, "--capture-duration", ""), 60 * 1000);
-  const captureGapMs = parseMs(readOption(args, "--capture-gap", ""), 10 * 1000);
-
-  const { server, store, httpServerReady } = createXLogMcpServer({
-    root: options.root,
-    dataDir: options.dataDir,
-    projectName: options.projectName,
-    host: options.host,
-    port: options.port,
-    strictPort: options.strictPort,
-    startHttpServer: !hasFlag(args, "--no-serve"),
-    retentionMs,
-    captureDurationMs,
-    captureGapMs,
-    debugDomSnapshots: options.debugDomSnapshots
-  });
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  const httpServer = await httpServerReady;
-  const httpStatus = httpServer ? ` | serve=${httpServer.serverUrl}` : " | serve=disabled";
-  console.error(`[xlog-mcp] started${httpStatus} | retention=${retentionMs / 1000}s capture=${captureDurationMs / 1000}s gap=${captureGapMs / 1000}s`);
-
-  for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, async () => {
-      await store.close();
-      process.exit(0);
-    });
-  }
-}
-
 const args = process.argv.slice(2);
 const command = args[0] || "serve";
 const options = readBaseOptions(args);
 
-if (!["serve", "query", "sessions", "bugpack", "mcp"].includes(command)) {
+if (!["serve", "query", "sessions", "bugpack"].includes(command)) {
   console.error(`Unknown command: ${command}`);
   process.exit(1);
 }
@@ -269,6 +227,4 @@ if (command === "serve") {
   await runSessions(args, options);
 } else if (command === "bugpack") {
   await runBugpack(args, options);
-} else if (command === "mcp") {
-  await runMcp(args, options);
 }

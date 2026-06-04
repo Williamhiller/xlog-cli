@@ -1,7 +1,5 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createXLogServer } from "../server/server.js";
-import { discoverMcpServer } from "../mcp/single-instance.js";
 
 function prependEntry(entry, runtimeEntry) {
   if (!entry) {
@@ -36,36 +34,11 @@ function prependEntry(entry, runtimeEntry) {
   return entry;
 }
 
-function bindProcessCleanup(cleanup) {
-  const handleExit = () => {
-    void cleanup();
-  };
-
-  process.once("SIGINT", handleExit);
-  process.once("SIGTERM", handleExit);
-  process.once("exit", handleExit);
-
-  return () => {
-    process.off("SIGINT", handleExit);
-    process.off("SIGTERM", handleExit);
-    process.off("exit", handleExit);
-  };
-}
-
 export class XLogWebpackPlugin {
   constructor(options = {}) {
     this.options = options;
     this.defineApplied = false;
-    this.serverUrl = null;
-    this.serverState = null;
-    this.releaseProcessCleanup = null;
-  }
-
-  async stopRegistration(compiler) {
-    if (this.serverState && !this.options.serverUrl) {
-      await this.serverState.close();
-      this.serverState = null;
-    }
+    this.serverUrl = options.serverUrl || "http://127.0.0.1:2718";
   }
 
   apply(compiler) {
@@ -76,70 +49,28 @@ export class XLogWebpackPlugin {
 
     compiler.options.entry = prependEntry(compiler.options.entry, runtimeEntry);
 
-    const ensureServer = async () => {
-      if (this.options.serverUrl) {
-        this.serverUrl = this.options.serverUrl;
-      } else {
-        // 先尝试发现 MCP 管理的服务器
-        const projectRoot = this.options.projectRoot || compiler.context || process.cwd();
-        const mcpServerUrl = await discoverMcpServer(projectRoot).catch(() => null);
+    const applyDefines = () => {
+      if (this.defineApplied) return;
 
-        if (mcpServerUrl) {
-          // MCP 已启动，连接到 MCP 管理的服务器
-          this.serverUrl = mcpServerUrl;
-          this.serverState = null;
-          console.log(`[xlog] connected to MCP server at ${this.serverUrl}`);
-        } else {
-          // MCP 未启动，自己启动服务器
-          this.serverState = await createXLogServer({
-            projectRoot,
-            projectName: this.options.projectName || path.basename(compiler.context || process.cwd()),
-            dataDir: this.options.dataDir,
-            host: this.options.host,
-            port: this.options.port,
-            allowFallbackPort: this.options.strictPort !== true,
-            silent: this.options.silent
-          });
-          this.serverUrl = this.serverState.serverUrl;
-        }
-      }
+      const definePlugin = new compiler.webpack.DefinePlugin({
+        __XLOG_SERVER_URL__: JSON.stringify(this.serverUrl),
+        __XLOG_PROJECT_NAME__: JSON.stringify(
+          this.options.projectName || path.basename(compiler.context || process.cwd())
+        ),
+        __XLOG_TOOL__: JSON.stringify("webpack"),
+        __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true)
+      });
 
-      this.releaseProcessCleanup?.();
-      this.releaseProcessCleanup = bindProcessCleanup(() => this.stopRegistration(compiler));
-
-      if (!this.defineApplied) {
-        const definePlugin = new compiler.webpack.DefinePlugin({
-          __XLOG_SERVER_URL__: JSON.stringify(this.serverUrl),
-          __XLOG_PROJECT_NAME__: JSON.stringify(
-            this.options.projectName || path.basename(compiler.context || process.cwd())
-          ),
-          __XLOG_TOOL__: JSON.stringify("webpack"),
-          __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true)
-        });
-
-        definePlugin.apply(compiler);
-        this.defineApplied = true;
-      }
+      definePlugin.apply(compiler);
+      this.defineApplied = true;
     };
 
-    const stopServer = async () => {
-      this.releaseProcessCleanup?.();
-      this.releaseProcessCleanup = null;
-      await this.stopRegistration(compiler);
-    };
-
-    compiler.hooks.beforeRun.tapPromise("XLogWebpackPlugin", ensureServer);
-    compiler.hooks.watchRun.tapPromise("XLogWebpackPlugin", ensureServer);
-    compiler.hooks.watchClose.tap("XLogWebpackPlugin", () => {
-      void stopServer();
+    compiler.hooks.beforeRun.tapPromise("XLogWebpackPlugin", async () => {
+      applyDefines();
     });
-    compiler.hooks.failed.tap("XLogWebpackPlugin", () => {
-      void stopServer();
+    compiler.hooks.watchRun.tapPromise("XLogWebpackPlugin", async () => {
+      applyDefines();
     });
-
-    if (compiler.hooks.shutdown?.tapPromise) {
-      compiler.hooks.shutdown.tapPromise("XLogWebpackPlugin", stopServer);
-    }
   }
 }
 

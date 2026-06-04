@@ -1,71 +1,34 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
-import { FileLogStore } from "../server/storage.js";
 import { HttpLogStore } from "./http-client.js";
 import { buildCaptureSharePayload, compactAiLogs, scoreLog } from "../server/share.js";
 import { groupRecordsIntoCaptures } from "../server/captures.js";
-import { DEFAULT_DATA_DIR } from "../shared/constants.js";
-import { createXLogServer } from "../server/server.js";
 import { collapseRepeatedLogs } from "../shared/repeated-logs.js";
-import { createLogAnalyzer, analyzeLogsForInsights, detectLogPatterns, detectLogAnomalies, analyzeLogTrends, generateLogRecommendations } from "./log-analyzer.js";
+import { analyzeLogsForInsights, detectLogPatterns, detectLogAnomalies, analyzeLogTrends, generateLogRecommendations } from "./log-analyzer.js";
 
 // ── Defaults ───────────────────────────────────────────────────────
 
 const DEFAULT_RETENTION_MS = 15 * 60 * 1000;      // 15 min (up from 5)
 const DEFAULT_CAPTURE_DURATION_MS = 60 * 1000;     // 1 min
 const DEFAULT_CAPTURE_GAP_MS = 10 * 1000;          // 10s inactivity → new capture
-const CLEANUP_INTERVAL_MS = 30 * 1000;             // cleanup every 30s
 const ERROR_RETENTION_MS = 60 * 60 * 1000;         // 1 hour for error-level logs
 
 export function createXLogMcpServer(options = {}) {
-  const projectRoot = options.root || process.cwd();
-  const dataDir = options.dataDir || DEFAULT_DATA_DIR;
-  const serverUrl = options.serverUrl || null;
+  const serverUrl = options.serverUrl || "http://127.0.0.1:2718";
+  const projectName = options.projectName || "unknown";
 
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
   const captureDurationMs = options.captureDurationMs ?? DEFAULT_CAPTURE_DURATION_MS;
   const captureGapMs = options.captureGapMs ?? DEFAULT_CAPTURE_GAP_MS;
-  const debugDomSnapshots = options.debugDomSnapshots === true;
 
-  // 根据是否提供 serverUrl 决定使用哪种存储
-  // - 如果提供了 serverUrl，使用 HttpLogStore 连接到远程服务器
-  // - 否则使用本地 FileLogStore
-  const store = serverUrl
-    ? new HttpLogStore(serverUrl)
-    : new FileLogStore({ projectRoot, dataDir });
-
-  const server = new McpServer({ name: "xlog-mcp", version: "0.6.0" });
-
-  // 如果使用 HTTP 客户端，不启动本地 HTTP 服务器
-  // 如果是主实例（没有 serverUrl），根据配置决定是否启动 HTTP 服务器
-  const startHttpServer = options.startHttpServer !== false && !serverUrl;
-  const httpServerReady = startHttpServer
-    ? createXLogServer({
-        projectRoot,
-        projectName: options.projectName,
-        dataDir,
-        host: options.host,
-        port: options.port,
-        allowFallbackPort: options.strictPort !== true,
-        silent: true,
-        debugDomSnapshots
-      })
-    : Promise.resolve(null);
+  // MCP 是纯 client，始终通过 HTTP 连接到已有的 server
+  const store = new HttpLogStore(serverUrl);
+  const server = new McpServer({ name: "xlog-mcp", version: "0.7.0" });
 
   // ── Periodic cleanup ──────────────────────────────────────────────
+  // MCP 是纯 client，cleanup 由 HTTP server 负责，不需要定时器
 
   let cleanupTimer = null;
-
-  async function cleanupOldLogs() {
-    try {
-      return await store.cleanupByRetention(retentionMs, ERROR_RETENTION_MS);
-    } catch {
-      return 0;
-    }
-  }
-
-  // Start periodic cleanup
-  cleanupTimer = setInterval(() => cleanupOldLogs(), CLEANUP_INTERVAL_MS);
 
   // ── Capture state ─────────────────────────────────────────────────
 
@@ -122,7 +85,7 @@ export function createXLogMcpServer(options = {}) {
     }).join(" ");
   }
 
-  // ── Tool 1: xlog_analyze ──────────────────────────────────────────
+  // ── Tool 1: xlog_status ──────────────────────────────────────────
 
   server.registerTool(
     "xlog_status",
@@ -134,33 +97,38 @@ export function createXLogMcpServer(options = {}) {
     },
     async () => {
       try {
-        const storage = await store.describeStorage();
-        const httpServer = await httpServerReady;
+        // 先检查 server 是否可达
+        let serverReachable = false;
+        try {
+          const res = await fetch(`${serverUrl}/api/health`, {
+            signal: AbortSignal.timeout(3000)
+          });
+          serverReachable = res.ok;
+        } catch {
+          serverReachable = false;
+        }
+
+        // 再查 storage（可能失败）
+        let storage = null;
+        try {
+          storage = await store.describeStorage();
+        } catch {
+          storage = { error: "server unreachable" };
+        }
 
         return ok({
           mcp: {
             ok: true,
-            root: projectRoot,
-            dataDir,
+            serverUrl,
+            projectName,
             retentionMs,
             captureDurationMs,
-            captureGapMs,
-            debugDomSnapshots
+            captureGapMs
           },
-          httpServer: httpServer
-            ? {
-                ok: true,
-                serverUrl: httpServer.serverUrl,
-                viewerUrl: httpServer.viewerUrl,
-                host: httpServer.host,
-                port: httpServer.port,
-                dataDir: httpServer.dataDir,
-                debugDomSnapshots: httpServer.debugDomSnapshots === true
-              }
-            : {
-                ok: false,
-                disabled: true
-              },
+          server: {
+            reachable: serverReachable,
+            url: serverUrl
+          },
           storage
         });
       } catch (err) {
@@ -832,14 +800,10 @@ export function createXLogMcpServer(options = {}) {
       clearInterval(cleanupTimer);
       cleanupTimer = null;
     }
-    const httpServer = await httpServerReady.catch(() => null);
-    if (httpServer) {
-      await httpServer.close();
-    }
     await originalClose();
   };
 
-  return { server, store, httpServerReady, serverUrl };
+  return { server, store, serverUrl };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

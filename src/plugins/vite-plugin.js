@@ -1,7 +1,5 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createXLogServer } from "../server/server.js";
-import { discoverMcpServer } from "../mcp/single-instance.js";
 
 const AUTO_SERVER_VIRTUAL_MODULE_ID = "virtual:xlog-client";
 const RESOLVED_AUTO_SERVER_VIRTUAL_MODULE_ID = `\0${AUTO_SERVER_VIRTUAL_MODULE_ID}`;
@@ -32,7 +30,7 @@ function createRuntimeInstallCode({ serverUrl, projectName, tool }) {
   return createRuntimeInstallSnippet({ serverUrl, projectName, tool });
 }
 
-function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots }) {
+function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots, interceptMethods }) {
   const define = {
     __XLOG_PROJECT_NAME__: JSON.stringify(projectName),
     __XLOG_TOOL__: JSON.stringify(tool),
@@ -43,12 +41,16 @@ function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots 
     define.__XLOG_SERVER_URL__ = JSON.stringify(serverUrl);
   }
 
+  if (interceptMethods) {
+    define.__XLOG_INTERCEPT_METHODS__ = JSON.stringify(interceptMethods);
+  }
+
   return {
     define
   };
 }
 
-function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, debugDomSnapshots }) {
+function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, debugDomSnapshots, interceptMethods }) {
   return [
     `import { installXLog } from "xlog-cli/runtime";`,
     "",
@@ -57,7 +59,8 @@ function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, deb
     `  projectName: ${JSON.stringify(projectName)},`,
     `  tool: ${JSON.stringify(tool)},`,
     `  source: ${JSON.stringify(source ?? undefined)},`,
-    `  debugDomSnapshots: ${JSON.stringify(debugDomSnapshots === true)}`,
+    `  debugDomSnapshots: ${JSON.stringify(debugDomSnapshots === true)},`,
+    `  interceptMethods: ${JSON.stringify(interceptMethods)}`,
     "});"
   ].join("\n");
 }
@@ -129,22 +132,6 @@ function shouldInjectRuntimeModule(id) {
   }
 
   return true;
-}
-
-function bindProcessCleanup(cleanup) {
-  const handleExit = () => {
-    void cleanup();
-  };
-
-  process.once("SIGINT", handleExit);
-  process.once("SIGTERM", handleExit);
-  process.once("exit", handleExit);
-
-  return () => {
-    process.off("SIGINT", handleExit);
-    process.off("SIGTERM", handleExit);
-    process.off("exit", handleExit);
-  };
 }
 
 function createRuntimeInjectionPlugin({
@@ -226,16 +213,7 @@ function createRuntimeInjectionPlugin({
 
 export function xlogVitePlugin(options = {}) {
   let configRoot = process.cwd();
-  let serverUrl = options.serverUrl;
-  let serverState = null;
-  let releaseProcessCleanup = null;
-
-  const stopRegistration = async () => {
-    if (serverState && !options.serverUrl) {
-      await serverState.close();
-      serverState = null;
-    }
-  };
+  const serverUrl = options.serverUrl || "http://127.0.0.1:2718";
 
   return {
     ...createRuntimeInjectionPlugin({
@@ -247,57 +225,23 @@ export function xlogVitePlugin(options = {}) {
           serverUrl,
           projectName: options.projectName || path.basename(configRoot),
           tool: "vite",
-          debugDomSnapshots: options.debugDomSnapshots === true
+          debugDomSnapshots: options.debugDomSnapshots === true,
+          interceptMethods: options.interceptMethods || null
         };
       }
     }),
     config(config) {
       const root = config.root || process.cwd();
       return createRuntimeDefines({
-        serverUrl: options.serverUrl,
+        serverUrl,
         projectName: options.projectName || path.basename(root),
         tool: "vite",
-        debugDomSnapshots: options.debugDomSnapshots === true
+        debugDomSnapshots: options.debugDomSnapshots === true,
+        interceptMethods: options.interceptMethods || null
       });
     },
-    async configResolved(config) {
+    configResolved(config) {
       configRoot = config.root || process.cwd();
-
-      if (!options.serverUrl) {
-        // 先尝试发现 MCP 管理的服务器
-        const mcpServerUrl = await discoverMcpServer(options.projectRoot || configRoot).catch(() => null);
-
-        if (mcpServerUrl) {
-          // MCP 已启动，连接到 MCP 管理的服务器
-          serverUrl = mcpServerUrl;
-          serverState = null;
-          console.log(`[xlog] connected to MCP server at ${serverUrl}`);
-        } else {
-          // MCP 未启动，Vite 插件自己启动服务器
-          serverState = await createXLogServer({
-            projectRoot: options.projectRoot || configRoot,
-            projectName: options.projectName || path.basename(configRoot),
-            dataDir: options.dataDir,
-            host: options.host,
-            port: options.port,
-            allowFallbackPort: options.strictPort !== true,
-            silent: options.silent
-          });
-          serverUrl = serverState.serverUrl;
-        }
-      } else {
-        serverUrl = options.serverUrl;
-      }
-
-      releaseProcessCleanup?.();
-      releaseProcessCleanup = bindProcessCleanup(stopRegistration);
-    },
-    configureServer(viteServer) {
-      viteServer.httpServer?.once("close", () => {
-        releaseProcessCleanup?.();
-        releaseProcessCleanup = null;
-        void stopRegistration();
-      });
     }
   };
 }
@@ -315,7 +259,8 @@ export function xlogViteClientPlugin(options = {}) {
           serverUrl: options.serverUrl,
           projectName: options.projectName || path.basename(configRoot),
           tool: options.tool || "vite",
-          debugDomSnapshots: options.debugDomSnapshots === true
+          debugDomSnapshots: options.debugDomSnapshots === true,
+          interceptMethods: options.interceptMethods || null
         };
       }
     }),
@@ -325,7 +270,8 @@ export function xlogViteClientPlugin(options = {}) {
         serverUrl: options.serverUrl,
         projectName: options.projectName || path.basename(root),
         tool: options.tool || "vite",
-        debugDomSnapshots: options.debugDomSnapshots === true
+        debugDomSnapshots: options.debugDomSnapshots === true,
+        interceptMethods: options.interceptMethods || null
       });
     },
     configResolved(config) {
