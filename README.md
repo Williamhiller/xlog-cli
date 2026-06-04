@@ -16,7 +16,18 @@ npm install -g xlog-cli
 
 ## Quick Start
 
-### Vite
+### 1. Start the server
+
+```bash
+npx xlog-cli serve
+# → listening on http://127.0.0.1:2718
+```
+
+The server receives browser logs and serves the viewer. Start it first.
+
+### 2. Add the plugin
+
+**Vite**
 
 ```js
 // vite.config.js
@@ -27,7 +38,7 @@ export default {
 };
 ```
 
-### Webpack
+**Webpack**
 
 ```js
 // webpack.config.js
@@ -38,7 +49,7 @@ export default {
 };
 ```
 
-Start your dev server. View logs at `http://127.0.0.1:2718/viewer/`
+Start your dev server. View logs at `http://127.0.0.1:2718/`
 
 ## CLI
 
@@ -48,8 +59,97 @@ CLI reads logs directly from local files — no server or MCP needed.
 npx xlog-cli query --limit 20    # Query logs
 npx xlog-cli sessions            # List sessions
 npx xlog-cli bugpack             # Export bugpack for AI
-npx xlog-cli serve               # Start HTTP server (optional)
 ```
+
+## MCP (AI Integration)
+
+Optional: MCP server lets AI assistants query logs via tools.
+
+```bash
+# Start MCP (connects to server at 127.0.0.1:2718)
+npx xlog-mcp
+
+# Or specify a custom server
+npx xlog-mcp --server-url http://127.0.0.1:3000
+```
+
+Claude Code config:
+
+```json
+{
+  "mcpServers": {
+    "xlog": {
+      "command": "npx",
+      "args": ["xlog-mcp"]
+    }
+  }
+}
+```
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `xlog_status` | Check MCP and server connection status |
+| `xlog_analyze` | Analyze recent logs, return errors and bugpack |
+| `xlog_query` | Query logs with filters |
+| `xlog_capture` | Capture a time window for reproduction |
+| `xlog_context` | Get surrounding context for a specific log |
+| `xlog_diff` | Compare two captures for regression debugging |
+| `xlog_insights` | AI-powered pattern analysis |
+| `xlog_patterns` | Detect error bursts and repeated errors |
+| `xlog_anomalies` | Detect unusual patterns |
+| `xlog_trends` | Analyze error rate trends |
+
+### AI Workflow
+
+1. `xlog_analyze` — examine existing logs
+2. `xlog_capture` — reproduce bug if needed
+3. AI suggests fix based on logs
+
+## Architecture
+
+```
+xlog-cli serve          ← HTTP server (receives browser logs, serves viewer)
+xlog-mcp                ← MCP server (connects to HTTP server, exposes tools to AI)
+Vite/Webpack plugin     ← Injects runtime into browser (sends logs to server)
+```
+
+**Server-first**: the HTTP server is independent infrastructure. MCP and plugins are clients that connect to it.
+
+```
+Browser → POST /api/x-log → xlog-cli serve → .xlog/ (JSONL + SQLite)
+                                    ↑
+                              xlog-mcp → AI assistant
+```
+
+## Configuration
+
+### Server
+
+```bash
+xlog-cli serve --port 3000 --host 127.0.0.1
+```
+
+By default, the server fails if the port is occupied. Use `--no-strict-port` to allow fallback to nearby ports.
+
+### Plugin
+
+```js
+xlogVitePlugin({
+  serverUrl: "http://127.0.0.1:3000",  // default: http://127.0.0.1:2718
+  projectName: "my-app",
+  debugDomSnapshots: false
+})
+```
+
+### MCP
+
+```bash
+xlog-mcp --server-url http://127.0.0.1:3000 --project my-app
+```
+
+Environment variables: `XLOG_SERVER_URL`, `XLOG_PROJECT_NAME`, `XLOG_RETENTION_MS`, `XLOG_CAPTURE_DURATION_MS`, `XLOG_CAPTURE_GAP_MS`.
 
 ## Claude Code Skill
 
@@ -61,37 +161,6 @@ Use `/xlog` in Claude Code to query logs directly:
 /xlog sessions           # List sessions
 /xlog bugpack            # Export bugpack
 ```
-
-## MCP (AI Integration)
-
-Optional: MCP server lets AI assistants query logs directly.
-
-```json
-{
-  "mcpServers": {
-    "xlog": {
-      "command": "npx",
-      "args": ["xlog-cli", "mcp"]
-    }
-  }
-}
-```
-
-**Auto-discovery**: MCP and Vite/Webpack plugins automatically discover each other.
-
-### MCP Tools
-
-| Tool | Purpose |
-|------|---------|
-| `xlog_analyze` | Analyze recent logs, return errors and bugpack |
-| `xlog_query` | Query logs with filters |
-| `xlog_capture` | Capture a time window for reproduction |
-
-### AI Workflow
-
-1. `xlog_analyze` — examine existing logs
-2. `xlog_capture` — reproduce bug if needed
-3. AI suggests fix based on logs
 
 ## Standalone (No Install)
 
