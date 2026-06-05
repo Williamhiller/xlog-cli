@@ -52,14 +52,20 @@ export class XLogWebpackPlugin {
     const applyDefines = () => {
       if (this.defineApplied) return;
 
-      const definePlugin = new compiler.webpack.DefinePlugin({
+      const define = {
         __XLOG_SERVER_URL__: JSON.stringify(this.serverUrl),
         __XLOG_PROJECT_NAME__: JSON.stringify(
           this.options.projectName || path.basename(compiler.context || process.cwd())
         ),
         __XLOG_TOOL__: JSON.stringify("webpack"),
         __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true)
-      });
+      };
+
+      if (this.options.source) {
+        define.__XLOG_SOURCE__ = JSON.stringify(this.options.source);
+      }
+
+      const definePlugin = new compiler.webpack.DefinePlugin(define);
 
       definePlugin.apply(compiler);
       this.defineApplied = true;

@@ -226,6 +226,12 @@ function normalizeSource(input) {
   return value || null;
 }
 
+function isExtensionContext() {
+  if (typeof location === "undefined") return false;
+  const href = location.href || "";
+  return href.startsWith("chrome-extension://") || href.startsWith("moz-extension://") || href.startsWith("safari-web-extension://");
+}
+
 function detectRuntimeSource(explicitSource) {
   const source = normalizeSource(explicitSource);
   if (source) {
@@ -233,34 +239,41 @@ function detectRuntimeSource(explicitSource) {
   }
 
   const pathname = typeof location !== "undefined" ? String(location.pathname || "").toLowerCase() : "";
+  const href = typeof location !== "undefined" ? String(location.href || "").toLowerCase() : "";
 
+  // Worker / Background (无 window)
   if (typeof window === "undefined") {
+    if (typeof ServiceWorkerGlobalScope !== "undefined") {
+      return "background";
+    }
     if (pathname.includes("background")) {
       return "background";
     }
-
     return "worker";
   }
 
-  if (pathname.includes("sidepanel")) {
-    return "sidepanel";
+  // 扩展上下文：用 extension URL 的 pathname 判断
+  if (isExtensionContext()) {
+    if (pathname.includes("sidepanel") || pathname.includes("side_panel")) return "sidepanel";
+    if (pathname.includes("popup")) return "popup";
+    if (pathname.includes("options")) return "options";
+    if (pathname.includes("dashboard")) return "dashboard";
+    if (pathname.includes("background") || pathname.includes("service-worker") || pathname.includes("offscreen")) return "background";
+    // 扩展页面但无法识别具体类型
+    return "extension-page";
   }
 
-  if (pathname.includes("popup")) {
-    return "popup";
-  }
-
-  if (pathname.includes("options")) {
-    return "options";
-  }
-
-  if (pathname.includes("dashboard")) {
-    return "dashboard";
-  }
-
-  if (pathname.includes("content")) {
+  // 普通网页上下文
+  // Content script 检测：检查是否有扩展注入标记
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+    // 在普通页面中且有 chrome.runtime → 大概率是 content script
     return "content";
   }
+
+  if (pathname.includes("sidepanel")) return "sidepanel";
+  if (pathname.includes("popup")) return "popup";
+  if (pathname.includes("options")) return "options";
+  if (pathname.includes("dashboard")) return "dashboard";
 
   if (typeof document !== "undefined" && document.title) {
     return "page";

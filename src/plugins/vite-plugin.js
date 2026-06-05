@@ -30,7 +30,7 @@ function createRuntimeInstallCode({ serverUrl, projectName, tool }) {
   return createRuntimeInstallSnippet({ serverUrl, projectName, tool });
 }
 
-function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots, interceptMethods }) {
+function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots, interceptMethods, source }) {
   const define = {
     __XLOG_PROJECT_NAME__: JSON.stringify(projectName),
     __XLOG_TOOL__: JSON.stringify(tool),
@@ -43,6 +43,10 @@ function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots,
 
   if (interceptMethods) {
     define.__XLOG_INTERCEPT_METHODS__ = JSON.stringify(interceptMethods);
+  }
+
+  if (source) {
+    define.__XLOG_SOURCE__ = JSON.stringify(source);
   }
 
   return {
@@ -98,6 +102,20 @@ function inferHtmlSource(ctx) {
 
     if (basename === "index" && KNOWN_HTML_SOURCES.has(parent)) {
       return parent;
+    }
+
+    // 匹配扩展常见目录结构: src/background/, src/content/ 等
+    const dirSegments = candidate.toLowerCase().split("/");
+    for (const seg of dirSegments) {
+      if (KNOWN_HTML_SOURCES.has(seg)) {
+        return seg;
+      }
+      if (seg === "background" || seg === "service-worker" || seg === "serviceworker") {
+        return "background";
+      }
+      if (seg === "content" || seg === "content-script" || seg === "contentscript") {
+        return "content";
+      }
     }
   }
 
@@ -237,7 +255,8 @@ export function xlogVitePlugin(options = {}) {
         projectName: options.projectName || path.basename(root),
         tool: "vite",
         debugDomSnapshots: options.debugDomSnapshots === true,
-        interceptMethods: options.interceptMethods || null
+        interceptMethods: options.interceptMethods || null,
+        source: options.source || null
       });
     },
     configResolved(config) {
