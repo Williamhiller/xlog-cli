@@ -1,6 +1,6 @@
 {
   "name": "xlog-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local-first development logger with browser interception, file storage, and an HTML viewer.",
   "type": "module",
   "files": [
