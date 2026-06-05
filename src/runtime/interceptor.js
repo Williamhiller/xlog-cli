@@ -43,6 +43,20 @@ function isXlogEndpoint(url, serverUrl) {
   }
 }
 
+/**
+ * 判断是否为扩展内部请求（chrome-extension:// 等协议的资源）
+ * 这类请求的失败不应该被记录为网络异常
+ */
+function isExtensionInternalUrl(url) {
+  if (!url) return false;
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "safari-web-extension:" || protocol === "chrome:" || protocol === "about:";
+  } catch {
+    return false;
+  }
+}
+
 function normalizeProjectName(input) {
   if (!input) {
     return undefined;
@@ -728,8 +742,8 @@ function interceptFetch(state) {
     const url = typeof args[0] === "string" ? args[0] : args[0]?.url || String(args[0]);
     const method = args[1]?.method || "GET";
 
-    // 跳过 xlog 自身的请求，避免反馈循环
-    if (isXlogEndpoint(url, state.serverUrl)) {
+    // 跳过 xlog 自身的请求和扩展内部请求
+    if (isXlogEndpoint(url, state.serverUrl) || isExtensionInternalUrl(url)) {
       return originalFetch(...args);
     }
 
@@ -790,6 +804,11 @@ function interceptXHR(state) {
 
     xhr.send = (...args) => {
       startMs = Date.now();
+
+      // 跳过扩展内部请求
+      if (isExtensionInternalUrl(url)) {
+        return originalSend(...args);
+      }
 
       xhr.addEventListener("loadend", () => {
         const durationMs = Date.now() - startMs;
@@ -898,7 +917,7 @@ export function installXLog(options = {}) {
     networkFailures: createNetworkRingBuffer(),
     performanceMonitor: null,
     performanceMetrics: {
-      enabled: options.performanceMonitoring !== false,
+      enabled: options.performanceMonitoring === true,
       sampleInterval: options.performanceSampleInterval || 5000,
       maxSamples: options.performanceMaxSamples || 100
     }
