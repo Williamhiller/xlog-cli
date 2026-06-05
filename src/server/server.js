@@ -10,7 +10,7 @@ import {
   hasBuiltReactViewer
 } from "./viewer.js";
 import { DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
-import { createRequestCache, createRateLimiter, createJsonParserCache } from "./request-cache.js";
+import { createRequestCache, createRateLimiter } from "./request-cache.js";
 
 function parseJsonBody(req, maxBytes = 4 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -160,12 +160,6 @@ export async function createXLogServer(options = {}) {
     enabled: options.rateLimit !== false,
     windowMs: options.rateLimitWindowMs || 60 * 1000, // 1 minute
     maxRequests: options.rateLimitMaxRequests || 100
-  });
-
-  const jsonParser = createJsonParserCache({
-    enabled: options.jsonCache !== false,
-    maxSize: options.jsonCacheSize || 50,
-    ttlMs: options.jsonCacheTtlMs || 5 * 60 * 1000 // 5 minutes
   });
 
   const ready = (async () => {
@@ -422,9 +416,7 @@ export async function createXLogServer(options = {}) {
 
       if (req.method === "POST" && (url.pathname === "/api/x-log" || url.pathname === "/api/logs")) {
         try {
-          // Parse JSON with cache
-          const body = await parseJsonBody(req);
-          const payload = jsonParser.parse(body);
+          const payload = await parseJsonBody(req);
           const result = await store.appendLogs(payload);
 
           if (result.records.length) {
