@@ -226,10 +226,82 @@ function normalizeSource(input) {
   return value || null;
 }
 
-function isExtensionContext() {
-  if (typeof location === "undefined") return false;
-  const href = location.href || "";
-  return href.startsWith("chrome-extension://") || href.startsWith("moz-extension://") || href.startsWith("safari-web-extension://");
+function getExtensionProtocol() {
+  if (typeof location === "undefined") return null;
+  const protocol = location.protocol || "";
+  if (protocol === "chrome-extension:" || protocol === "moz-extension:" || protocol === "safari-web-extension:") {
+    return protocol;
+  }
+  return null;
+}
+
+function isExtensionRuntime() {
+  try {
+    return typeof chrome !== "undefined" && !!chrome.runtime && !!chrome.runtime.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 从 manifest 配置检测当前页面角色（最可靠）
+ *
+ * manifest 声明了每个页面的用途，不管文件名叫什么都能匹配。
+ * MV2 + MV3 兼容。
+ */
+function detectSourceFromManifest() {
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.getManifest) return null;
+
+    const manifest = chrome.runtime.getManifest();
+    if (!manifest) return null;
+
+    const currentPath = (location.pathname || "").toLowerCase();
+
+    // Helper: 检查当前路径是否匹配 manifest 中声明的某个页面
+    function matchesPage(manifestPath) {
+      if (!manifestPath) return false;
+      const normalized = "/" + manifestPath.replace(/^\//, "");
+      return currentPath === normalized.toLowerCase() || currentPath.endsWith(normalized.toLowerCase());
+    }
+
+    // MV3: side_panel
+    if (matchesPage(manifest.side_panel?.default_path)) return "sidepanel";
+
+    // MV3: action.default_popup / MV2: browser_action.default_popup
+    if (matchesPage(manifest.action?.default_popup)) return "popup";
+    if (matchesPage(manifest.browser_action?.default_popup)) return "popup";
+
+    // MV3: chrome_url_overrides.newtab
+    if (matchesPage(manifest.chrome_url_overrides?.newtab)) return "page";
+
+    // Options page
+    if (matchesPage(manifest.options_page)) return "options";
+    if (matchesPage(manifest.options_ui?.page)) return "options";
+
+    // DevTools page
+    if (matchesPage(manifest.devtools_page)) return "devtools";
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 基于 URL 模式的启发式检测（兜底）
+ */
+function detectSourceFromPathname(pathname) {
+  if (pathname.includes("sidepanel") || pathname.includes("side_panel") || pathname.includes("side-panel") || pathname.includes("sidebar")) {
+    return "sidepanel";
+  }
+  if (pathname.includes("popup")) return "popup";
+  if (pathname.includes("options") || pathname.includes("settings")) return "options";
+  if (pathname.includes("dashboard")) return "dashboard";
+  if (pathname.includes("offscreen")) return "offscreen";
+  if (pathname.includes("background") || pathname.includes("service-worker") || pathname.includes("serviceworker")) return "background";
+  if (pathname.includes("devtools") || pathname.includes("dev-tools")) return "devtools";
+  return null;
 }
 
 function detectRuntimeSource(explicitSource) {
@@ -239,45 +311,35 @@ function detectRuntimeSource(explicitSource) {
   }
 
   const pathname = typeof location !== "undefined" ? String(location.pathname || "").toLowerCase() : "";
-  const href = typeof location !== "undefined" ? String(location.href || "").toLowerCase() : "";
 
-  // Worker / Background (无 window)
+  // ── Worker / Service Worker ──
   if (typeof window === "undefined") {
-    if (typeof ServiceWorkerGlobalScope !== "undefined") {
-      return "background";
-    }
-    if (pathname.includes("background")) {
-      return "background";
-    }
+    if (typeof ServiceWorkerGlobalScope !== "undefined") return "background";
+    if (isExtensionRuntime()) return "background";
     return "worker";
   }
 
-  // 扩展上下文：用 extension URL 的 pathname 判断
-  if (isExtensionContext()) {
-    if (pathname.includes("sidepanel") || pathname.includes("side_panel")) return "sidepanel";
-    if (pathname.includes("popup")) return "popup";
-    if (pathname.includes("options")) return "options";
-    if (pathname.includes("dashboard")) return "dashboard";
-    if (pathname.includes("background") || pathname.includes("service-worker") || pathname.includes("offscreen")) return "background";
-    // 扩展页面但无法识别具体类型
+  // ── 扩展环境 ──
+  if (getExtensionProtocol()) {
+    // 优先：从 manifest 配置精确匹配
+    const manifestSource = detectSourceFromManifest();
+    if (manifestSource) return manifestSource;
+
+    // 兜底：URL pathname 启发式
+    const pathSource = detectSourceFromPathname(pathname);
+    if (pathSource) return pathSource;
+
     return "extension-page";
   }
 
-  // 普通网页上下文
-  // Content script 检测：检查是否有扩展注入标记
-  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
-    // 在普通页面中且有 chrome.runtime → 大概率是 content script
+  // ── Content script（普通页面 + 扩展 runtime）──
+  if (isExtensionRuntime()) {
     return "content";
   }
 
-  if (pathname.includes("sidepanel")) return "sidepanel";
-  if (pathname.includes("popup")) return "popup";
-  if (pathname.includes("options")) return "options";
-  if (pathname.includes("dashboard")) return "dashboard";
-
-  if (typeof document !== "undefined" && document.title) {
-    return "page";
-  }
+  // ── 普通网页 ──
+  const pathSource = detectSourceFromPathname(pathname);
+  if (pathSource) return pathSource;
 
   return "page";
 }
