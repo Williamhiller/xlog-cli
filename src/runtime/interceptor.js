@@ -699,6 +699,18 @@ export function xlogConsole(level, meta, ...args) {
   const state = getInstalledState() || maybeAutoInstallFromConsole(meta);
 
   if (state && typeof state.captureEntry === "function") {
+    // 检查是否开启了 console 捕获
+    if (!state.captureConsole) {
+      const fallback = console[level] || console.log;
+      return fallback.apply(console, withConsoleMetaSuffix(args, meta));
+    }
+
+    // 检查该方法是否在允许列表中
+    if (state.interceptMethods && !state.interceptMethods.includes(level)) {
+      const fallback = console[level] || console.log;
+      return fallback.apply(console, withConsoleMetaSuffix(args, meta));
+    }
+
     return state.captureEntry({
       level,
       method: level,

@@ -1,4 +1,4 @@
-const METHODS = new Set(["log", "info", "warn", "error", "debug", "trace"]);
+const DEFAULT_METHODS = ["log", "info", "warn", "error", "debug", "trace"];
 
 function propertyName(node) {
   if (!node) {
@@ -95,8 +95,9 @@ function inferFunctionName(path) {
   return null;
 }
 
-export default function xlogBabelPlugin(babel) {
+export default function xlogBabelPlugin(babel, options = {}) {
   const t = babel.types;
+  const methods = new Set(options.methods || DEFAULT_METHODS);
 
   return {
     name: "xlog-babel-plugin",
@@ -142,7 +143,7 @@ export default function xlogBabelPlugin(babel) {
         }
 
         const method = callee.get("property").node.name;
-        if (!METHODS.has(method)) {
+        if (!methods.has(method)) {
           return;
         }
 
