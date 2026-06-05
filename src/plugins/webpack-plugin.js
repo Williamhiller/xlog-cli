@@ -58,7 +58,9 @@ export class XLogWebpackPlugin {
           this.options.projectName || path.basename(compiler.context || process.cwd())
         ),
         __XLOG_TOOL__: JSON.stringify("webpack"),
-        __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true)
+        __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(this.options.debugDomSnapshots === true),
+        __XLOG_CAPTURE_CONSOLE__: JSON.stringify(this.options.captureConsole === true),
+        __XLOG_CAPTURE_ERRORS__: JSON.stringify(this.options.captureErrors === true)
       };
 
       if (this.options.source) {

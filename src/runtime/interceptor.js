@@ -870,6 +870,30 @@ export function installXLog(options = {}) {
   const injectedInterceptMethods = getResolvedConfig("__XLOG_INTERCEPT_METHODS__");
   const interceptMethods = options.interceptMethods || injectedInterceptMethods || null;
 
+  // 控制台拦截：默认关闭，显式开启
+  const captureConsole = options.captureConsole === true || Array.isArray(interceptMethods);
+
+  // 错误捕获（window.error / unhandledrejection）：默认关闭
+  const captureErrors = options.captureErrors === true;
+
+  // 性能监控：默认关闭
+  const perfMonitoring = options.performanceMonitoring === true;
+
+  // 如果什么都没开，不安装拦截器
+  if (!captureConsole && !captureErrors && !perfMonitoring) {
+    return {
+      flush: async () => {},
+      uninstall: () => {},
+      getState: () => ({
+        installed: false,
+        captureConsole: false,
+        captureErrors: false,
+        performanceMonitoring: false,
+        reason: "all capture options disabled"
+      })
+    };
+  }
+
   const state = {
     installed: true,
     startedAt,
@@ -900,8 +924,10 @@ export function installXLog(options = {}) {
     injectedDebugDomSnapshots,
     debugDomSnapshotsReady: explicitDebugDomSnapshots !== undefined || injectedDebugDomSnapshots !== undefined,
     debugDomSnapshotsFetch: null,
+    captureConsole,
+    captureErrors,
     captureGlobalConsole: options.captureGlobalConsole === true,
-    interceptMethods, // null = 拦截所有，数组 = 只拦截指定方法
+    interceptMethods, // 数组 = 只拦截指定方法，null = 不拦截（需 captureConsole: true）
     originalConsole: {},
     queue: [],
     sequence: 0,
@@ -917,7 +943,7 @@ export function installXLog(options = {}) {
     networkFailures: createNetworkRingBuffer(),
     performanceMonitor: null,
     performanceMetrics: {
-      enabled: options.performanceMonitoring === true,
+      enabled: perfMonitoring,
       sampleInterval: options.performanceSampleInterval || 5000,
       maxSamples: options.performanceMaxSamples || 100
     }
@@ -1244,33 +1270,36 @@ export function installXLog(options = {}) {
 
   state.captureEntry = captureEntry;
 
-  // 确定要拦截的 console 方法
-  const methodsToIntercept = state.interceptMethods
-    ? state.interceptMethods.filter(m => CAPTURED_CONSOLE_METHODS.includes(m))
-    : CAPTURED_CONSOLE_METHODS;
+  // ── Console 拦截（默认关闭，需 captureConsole: true 或 interceptMethods 数组）──
+  if (captureConsole) {
+    const methodsToIntercept = interceptMethods
+      ? interceptMethods.filter(m => CAPTURED_CONSOLE_METHODS.includes(m))
+      : CAPTURED_CONSOLE_METHODS;
 
-  for (const method of methodsToIntercept) {
-    if (typeof console[method] !== "function") {
-      continue;
-    }
-
-    state.originalConsole[method] = console[method].bind(console);
-
-    console[method] = (...args) => {
-      if (method === "assert" && args[0]) {
-        return state.originalConsole.assert(...args);
+    for (const method of methodsToIntercept) {
+      if (typeof console[method] !== "function") {
+        continue;
       }
 
-      return captureEntry({
-        level: method === "assert" ? "error" : method,
-        method,
-        kind: "console",
-        args,
-        echoConsole: true
-      });
-    };
+      state.originalConsole[method] = console[method].bind(console);
+
+      console[method] = (...args) => {
+        if (method === "assert" && args[0]) {
+          return state.originalConsole.assert(...args);
+        }
+
+        return captureEntry({
+          level: method === "assert" ? "error" : method,
+          method,
+          kind: "console",
+          args,
+          echoConsole: true
+        });
+      };
+    }
   }
 
+  // ── Error 监听（默认关闭，需 captureErrors: true）──
   const onError = (event) => {
     captureEntry({
       level: "error",
@@ -1319,7 +1348,7 @@ export function installXLog(options = {}) {
       ? globalThis
       : null;
 
-  if (runtimeTarget) {
+  if (runtimeTarget && captureErrors) {
     runtimeTarget.addEventListener("error", onError);
     runtimeTarget.addEventListener("unhandledrejection", onUnhandledRejection);
     state.listeners.push([runtimeTarget, "error", onError]);
@@ -1392,10 +1421,11 @@ export function installXLog(options = {}) {
         loggingDisabledAt: state.loggingDisabledAt,
         retryCount: state.retryCount,
         serverReachable: state.serverReachable,
+        captureConsole: state.captureConsole,
+        captureErrors: state.captureErrors,
+        interceptMethods: state.interceptMethods,
         recentNetworkFailures: state.networkFailures ? state.networkFailures.getRecentFailures().length : 0,
-        performanceMonitoring: state.performanceMetrics.enabled,
-        performanceMonitor: state.performanceMonitor ? state.performanceMonitor.getMetrics() : null,
-        interceptMethods: state.interceptMethods
+        performanceMonitoring: state.performanceMetrics.enabled
       };
     },
     getPerformanceMetrics() {

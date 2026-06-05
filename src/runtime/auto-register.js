@@ -8,5 +8,13 @@ installXLog({
   debugDomSnapshots:
     typeof __XLOG_DEBUG_DOM_SNAPSHOTS__ !== "undefined"
       ? __XLOG_DEBUG_DOM_SNAPSHOTS__
+      : undefined,
+  captureConsole:
+    typeof __XLOG_CAPTURE_CONSOLE__ !== "undefined"
+      ? __XLOG_CAPTURE_CONSOLE__
+      : undefined,
+  captureErrors:
+    typeof __XLOG_CAPTURE_ERRORS__ !== "undefined"
+      ? __XLOG_CAPTURE_ERRORS__
       : undefined
 });

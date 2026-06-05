@@ -30,11 +30,13 @@ function createRuntimeInstallCode({ serverUrl, projectName, tool }) {
   return createRuntimeInstallSnippet({ serverUrl, projectName, tool });
 }
 
-function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots, interceptMethods, source }) {
+function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots, interceptMethods, source, captureConsole, captureErrors }) {
   const define = {
     __XLOG_PROJECT_NAME__: JSON.stringify(projectName),
     __XLOG_TOOL__: JSON.stringify(tool),
-    __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(debugDomSnapshots === true)
+    __XLOG_DEBUG_DOM_SNAPSHOTS__: JSON.stringify(debugDomSnapshots === true),
+    __XLOG_CAPTURE_CONSOLE__: JSON.stringify(captureConsole === true),
+    __XLOG_CAPTURE_ERRORS__: JSON.stringify(captureErrors === true)
   };
 
   if (serverUrl) {
@@ -54,7 +56,7 @@ function createRuntimeDefines({ serverUrl, projectName, tool, debugDomSnapshots,
   };
 }
 
-function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, debugDomSnapshots, interceptMethods }) {
+function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, debugDomSnapshots, interceptMethods, captureConsole, captureErrors }) {
   return [
     `import { installXLog } from "xlog-cli/runtime";`,
     "",
@@ -64,7 +66,9 @@ function createRuntimeInstallSnippet({ serverUrl, projectName, tool, source, deb
     `  tool: ${JSON.stringify(tool)},`,
     `  source: ${JSON.stringify(source ?? undefined)},`,
     `  debugDomSnapshots: ${JSON.stringify(debugDomSnapshots === true)},`,
-    `  interceptMethods: ${JSON.stringify(interceptMethods)}`,
+    `  interceptMethods: ${JSON.stringify(interceptMethods)},`,
+    `  captureConsole: ${JSON.stringify(captureConsole === true)},`,
+    `  captureErrors: ${JSON.stringify(captureErrors === true)}`,
     "});"
   ].join("\n");
 }
@@ -244,7 +248,9 @@ export function xlogVitePlugin(options = {}) {
           projectName: options.projectName || path.basename(configRoot),
           tool: "vite",
           debugDomSnapshots: options.debugDomSnapshots === true,
-          interceptMethods: options.interceptMethods || null
+          interceptMethods: options.interceptMethods || null,
+          captureConsole: options.captureConsole === true,
+          captureErrors: options.captureErrors === true
         };
       }
     }),
@@ -256,7 +262,9 @@ export function xlogVitePlugin(options = {}) {
         tool: "vite",
         debugDomSnapshots: options.debugDomSnapshots === true,
         interceptMethods: options.interceptMethods || null,
-        source: options.source || null
+        source: options.source || null,
+        captureConsole: options.captureConsole === true,
+        captureErrors: options.captureErrors === true
       });
     },
     configResolved(config) {
